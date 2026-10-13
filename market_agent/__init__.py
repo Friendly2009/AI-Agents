@@ -1,1 +1,0 @@
-"""Weekly Market Agent."""
