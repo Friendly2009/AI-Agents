@@ -5,13 +5,16 @@ from pathlib import Path
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .config import Settings
 from .diagnostics import diagnose
+from .models import Profile
 from .network import HTTP
+from .recommendations import POLICIES
 from .scheduler import scheduler
 from .service import Service
 from .storage import Store
@@ -46,12 +49,17 @@ def create_app(settings=None):
 
     app = FastAPI(
         title="Weekly Market Agent",
-        version="0.2.0",
+        version="0.3.0",
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
     )
+    @app.exception_handler(RequestValidationError)
+    async def invalid_input(request, exc):
+        return JSONResponse(status_code=422, content={"detail": "Проверьте профиль: бюджет, срок 7–365 дней, "
+                            "уровень риска и целое количество акций без повторения тикеров."})
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -90,7 +98,7 @@ def create_app(settings=None):
     def config():
         return {
             "mode": settings.mode,
-            "version": "0.2.0",
+            "version": "0.3.0",
             "llm_enabled": settings.llm_enabled,
             "llm_model": settings.llm_model,
             "news_poll_minutes": settings.news_poll_minutes,
@@ -106,6 +114,17 @@ def create_app(settings=None):
                 "catchup": settings.schedule_catchup,
             },
         }
+
+    @app.get("/api/profile", dependencies=[Depends(authorized)])
+    def profile():
+        return {"saved": store.profile(), "risk_policies": POLICIES}
+
+    @app.post("/api/profile", dependencies=[Depends(authorized)])
+    def save_profile(profile: Profile):
+        known = {i.symbol for i in markets.instruments}
+        if any(h.symbol not in known for h in profile.holdings):
+            raise HTTPException(422, "Портфель содержит тикеры вне настроенного списка MOEX")
+        return store.save_profile(profile)
 
     @app.post("/api/runs", status_code=202, dependencies=[Depends(authorized)])
     async def run():

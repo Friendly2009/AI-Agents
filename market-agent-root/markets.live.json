@@ -1,7 +1,130 @@
 {
   "instruments": [
-    {"exchange": "MOEX", "symbol": "SBER", "board": "TQBR", "keywords": ["Сбер", "Сбера", "Сберу", "Сбером", "Сбербанк", "Сбербанка", "Сбербанку", "Сбербанком", "Sber"]},
-    {"exchange": "MOEX", "symbol": "GAZP", "board": "TQBR", "keywords": ["Газпром", "Газпрома", "Газпрому", "Газпромом", "Gazprom"]}
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "SBER",
+      "keywords": ["Сбербанк", "Сбербанка", "Сбер", "Sber"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "GAZP",
+      "keywords": ["Газпром", "Газпрома", "Gazprom"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "LKOH",
+      "keywords": ["Лукойл", "Лукойла", "Lukoil"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "ROSN",
+      "keywords": ["Роснефть", "Роснефти", "Rosneft"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "NVTK",
+      "keywords": ["Новатэк", "Новатэка", "Novatek"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "TATN",
+      "keywords": ["Татнефть", "Татнефти", "Tatneft"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "SNGS",
+      "keywords": ["Сургутнефтегаз", "Сургутнефтегаза"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "GMKN",
+      "keywords": ["Норникель", "Норникеля", "Норильский никель"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "PLZL",
+      "keywords": ["Полюс", "Полюса", "Polyus"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "CHMF",
+      "keywords": ["Северсталь", "Северстали"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "NLMK",
+      "keywords": ["НЛМК", "Новолипецкий"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "MAGN",
+      "keywords": ["ММК", "Магнитогорский"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "ALRS",
+      "keywords": ["Алроса", "Алросы", "Alrosa"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "MGNT",
+      "keywords": ["Магнит", "Магнита"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "MTSS",
+      "keywords": ["МТС", "MTS"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "MOEX",
+      "keywords": [
+        "Мосбиржа",
+        "Мосбиржи",
+        "Московская биржа",
+        "Московской биржи"
+      ]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "PHOR",
+      "keywords": ["Фосагро", "Phosagro"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "IRAO",
+      "keywords": ["Интер РАО"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "HYDR",
+      "keywords": ["Русгидро"]
+    },
+    {
+      "exchange": "MOEX",
+      "board": "TQBR",
+      "symbol": "RUAL",
+      "keywords": ["Русал", "Русала", "Rusal"]
+    }
   ],
   "news_feeds": [
     "https://www.vedomosti.ru/rss/rubric/business",

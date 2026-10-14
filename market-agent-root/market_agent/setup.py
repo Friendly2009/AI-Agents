@@ -11,7 +11,7 @@ from dotenv import dotenv_values
 
 from .config import Settings
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 
@@ -86,7 +86,7 @@ def interactive_setup(force=False):
         settings.markets()
         print("Настройка MOEX + Gemini уже сохранена. Для смены ключа: python -m market_agent setup --force")
         return
-    print("Подключение MOEX: SBER и GAZP, RSS-новости, Gemini.")
+    print("Подключение MOEX: список из markets.live.json, RSS-новости, Gemini.")
     print("Ключ будет сохранён только в локальном .env. Ввод скрыт; вставьте ключ и нажмите Enter.")
     print(
         "Используйте ключ проекта Free Tier для бесплатной квоты. Тариф вашего проекта программа не меняет."

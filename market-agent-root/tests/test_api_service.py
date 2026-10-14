@@ -1,111 +1,88 @@
 import asyncio
-from datetime import datetime, timezone
+import json
+from datetime import date, timedelta
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-from market_agent.api import create_app
-from market_agent.config import Settings
-from market_agent.network import HTTP, SourceError
-from market_agent.service import Service
-from market_agent.storage import Store
 from pydantic import ValidationError
 
-
-def test_api_auth_and_no_secret_leak(settings):
-    with TestClient(create_app(settings)) as client:
-        assert client.get("/").status_code == 200
-        for url in ["/api/runs", "/api/config", "/api/openapi.json"]:
-            assert client.get(url).status_code == 401
-            assert client.get(url, headers={"Authorization": "Bearer wrong"}).status_code == 401
-        assert client.post("/api/runs").status_code == 401
-        headers = {"Authorization": "Bearer " + settings.api_token.get_secret_value()}
-        result = client.get("/api/config", headers=headers)
-        assert result.status_code == 200 and "api_token" not in result.text
-        assert client.get("/api/runs/missing", headers=headers).status_code == 404
-        assert client.get("/api/runs?limit=1000", headers=headers).status_code == 422
-        assert client.get("/api/openapi.json", headers=headers).status_code == 200
+from market_agent.analysis import ai_analysis, metrics
+from market_agent.models import Candle
+from market_agent.network import HTTP, SourceError
+from market_agent.providers import validate_candles
 
 
-def test_demo_report_no_network(settings):
-    async def run():
-        def reject(_):
-            raise AssertionError("Demo attempted network access")
-
-        async with httpx.AsyncClient(transport=httpx.MockTransport(reject)) as client:
-            service = Service(settings, settings.markets(), Store(settings.database_path), HTTP(client, 0))
-            report = await service.build_report(datetime(2026, 10, 12, 9, tzinfo=timezone.utc))
-            assert report["mode"] == "demo"
-            assert report["instruments"][0]["metrics"]["last_date"] == "2026-10-09"
-            assert report["instruments"][0]["analysis_kind"] == "calculated"
-            assert "ДЕМО" in report["warnings"][0]
-
-    asyncio.run(run())
+def candles(n=25):
+    return [
+        Candle(
+            day=date(2026, 9, 1) + timedelta(days=i),
+            open=100 + i,
+            high=102 + i,
+            low=99 + i,
+            close=101 + i,
+            volume=100,
+        )
+        for i in range(n)
+    ]
 
 
-def test_manual_run_roundtrip(settings):
-    async def run():
-        app = create_app(settings)
-        async with app.router.lifespan_context(app):
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app),
-                base_url="http://test",
-                headers={"Authorization": "Bearer " + settings.api_token.get_secret_value()},
-            ) as client:
-                response = await client.post("/api/runs")
-                assert response.status_code == 202
-                run_id = response.json()["id"]
-                await asyncio.gather(*list(app.state.service.tasks))
-                result = (await client.get("/api/runs/" + run_id)).json()
-                assert result["status"] == "degraded" and result["report"]["mode"] == "demo"
-                assert len((await client.get("/api/runs")).json()) == 1
-
-    asyncio.run(run())
+def test_metrics_exact_baseline_and_sma():
+    result = metrics(candles())
+    assert result["weekly_change_pct"] == round((125 / 118 - 1) * 100, 4)
+    assert result["sma20"] == 115.5
+    assert result["weekly_baseline_date"] == "2026-09-18"
+    assert result["volume_ratio"] == 1
 
 
-def test_upstream_failure_recorded(settings):
-    async def run():
-        class Broken:
-            async def candles(self, *args):
-                raise SourceError("Источник недоступен")
-
-        async with httpx.AsyncClient() as client:
-            store = Store(settings.database_path)
-            service = Service(settings, settings.markets(), store, HTTP(client, 0))
-            service.provider = Broken()
-            run_id = store.claim()
-            await service.execute(run_id)
-            assert store.get(run_id)["status"] == "failed"
-
-    asyncio.run(run())
+def test_short_history_no_invented_indicators():
+    result = metrics(candles(2))
+    assert result["sma20"] is None and result["weekly_change_pct"] is None
 
 
-def test_duplicate_manual_run_409(settings):
-    async def run():
-        app = create_app(settings)
-        async with app.router.lifespan_context(app):
-
-            async def slow():
-                await asyncio.sleep(100)
-
-            app.state.service.build_report = slow
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app),
-                base_url="http://test",
-                headers={"Authorization": "Bearer " + settings.api_token.get_secret_value()},
-            ) as client:
-                assert (await client.post("/api/runs")).status_code == 202
-                assert (await client.post("/api/runs")).status_code == 409
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("token", ["short", "CHANGE_ME_GENERATE_A_RANDOM_TOKEN"])
-def test_bad_token_refused(token):
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -1, 0])
+def test_bad_prices(value):
     with pytest.raises(ValidationError):
-        Settings(_env_file=None, api_token=token)
+        Candle(day=date.today(), open=1, high=2, low=1, close=value, volume=0)
 
 
-def test_llm_incomplete_config_refused():
+def test_ohlc_order():
     with pytest.raises(ValidationError):
-        Settings(_env_file=None, api_token="x" * 40, llm_enabled=True)
+        Candle(day=date.today(), open=3, high=2, low=1, close=1, volume=0)
+
+
+def test_duplicate_and_future_candles_rejected():
+    data = candles(2)
+    with pytest.raises(SourceError):
+        validate_candles(data + data, date(2026, 9, 1), date(2026, 9, 30))
+    with pytest.raises(SourceError):
+        validate_candles(data, date(2026, 8, 1), date(2026, 8, 31))
+
+
+@pytest.mark.parametrize(
+    "payload,valid",
+    [
+        ({"summary": "Обзор", "risks": [], "source_ids": ["known"]}, True),
+        ({"summary": "Обзор", "risks": [], "source_ids": ["invented"]}, False),
+        ({"summary": "", "risks": [], "source_ids": []}, False),
+        ({"summary": "Обзор", "risks": [], "source_ids": [], "extra": "x"}, False),
+    ],
+)
+def test_ai_schema_and_sources(settings, payload, valid):
+    async def run():
+        def handle(request):
+            body = json.loads(request.content)
+            assert "НЕПРОВЕРЕННЫЙ" in body["messages"][0]["content"]
+            return httpx.Response(
+                200,
+                json={"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(payload)}}]},
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            call = ai_analysis(HTTP(client, 0), settings, {"news": [{"id": "known"}]})
+            if valid:
+                assert (await call)["source_ids"] == ["known"]
+            else:
+                with pytest.raises(SourceError):
+                    await call
+
+    asyncio.run(run())

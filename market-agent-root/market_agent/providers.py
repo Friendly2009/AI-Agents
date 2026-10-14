@@ -30,6 +30,25 @@ class MOEX:
     def __init__(self, http):
         self.http = http
 
+    async def security(self, instrument):
+        data = await self.http.json(
+            "GET", "https://iss.moex.com/iss/engines/stock/markets/shares/boards/"
+            f"{instrument.board}/securities/{instrument.symbol}.json",
+            params={"iss.meta": "off", "iss.only": "securities"},
+        )
+        try:
+            block = data["securities"]
+            row = next(dict(zip(block["columns"], row, strict=True)) for row in block["data"]
+                       if row[block["columns"].index("SECID")] == instrument.symbol)
+            lot = row["LOTSIZE"]
+            if isinstance(lot, bool) or not isinstance(lot, (int, float)) or int(lot) != lot or lot <= 0:
+                raise ValueError("Invalid lot")
+            if row["CURRENCYID"] not in {"SUR", "RUB"}:
+                raise ValueError("Only ruble securities supported")
+            return {"lot_size": int(lot), "currency": "RUB", "name": row.get("SHORTNAME", instrument.symbol)}
+        except (KeyError, ValueError, IndexError, TypeError, StopIteration) as exc:
+            raise SourceError("MOEX не подтвердил размер лота и валюту бумаги") from exc
+
     async def candles(self, instrument, start: date, end: date):
         url = (
             "https://iss.moex.com/iss/engines/stock/markets/shares/boards/"

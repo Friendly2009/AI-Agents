@@ -1,22 +1,972 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Недельный обзор рынка</title><style>
-:root{color-scheme:dark;font:16px/1.6 system-ui;color:#e4eaf0;background:#101722}*{box-sizing:border-box}body{margin:0}main{max-width:1100px;margin:auto;padding:32px 22px}h1{font-size:30px;letter-spacing:-1px;margin:0}h2{font-size:22px}h3{font-size:18px}.muted,small{color:#a3b2c3}.tag{font-size:12px;letter-spacing:2px;color:#63d4be}.card{background:#182332;border:1px solid #2c3b4f;border-radius:16px;padding:24px;margin:20px 0}.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}input,button{font:inherit;border-radius:8px;padding:10px 14px}input{background:#101722;border:1px solid #506178;color:inherit;max-width:100%;width:380px}button{background:#8ce6cd;color:#122b26;border:0;cursor:pointer;font-weight:650}button.secondary{background:#2b3d52;color:#e4eaf0}button:disabled{opacity:.5;cursor:wait}.warn{border-left:3px solid #e9be64;padding:8px 14px;background:#302b23;color:#eed8a7;white-space:pre-wrap}.error{color:#ffb3b3}#layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:24px}.history{width:100%;text-align:left;display:block;margin-bottom:10px;font-size:14px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.metric{background:#101722;border-radius:8px;padding:12px}.value{font-size:23px;color:#8ce6cd}.summary{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#8ce6cd}svg{width:100%;height:150px;margin-top:12px}.hidden{display:none}footer{padding:20px 0;color:#a3b2c3;font-size:13px}@media(max-width:750px){#layout{grid-template-columns:1fr}.metrics{grid-template-columns:1fr}main{padding:22px 16px}.card{padding:18px}}
-</style></head><body><main><div class="tag">MARKET AGENT / WEEKLY RESEARCH</div><h1>Недельный обзор рынка</h1><div class="muted">Котировки, новости и история аналитических отчётов</div>
-<section class="card" id="login"><h2>Подключение</h2><p class="muted">Введите API_TOKEN из .env. Ключ хранится только в памяти вкладки.</p><form id="loginForm" class="toolbar"><input id="token" type="password" aria-label="API token" placeholder="API token" autocomplete="off" required><button>Подключиться</button></form></section><p id="message" role="status" aria-live="polite"></p>
-<section id="app" class="hidden"><div class="card"><strong id="mode"></strong><p id="schedule" class="muted"></p><p id="configNote" class="muted"></p><div class="toolbar"><button id="run">Запустить анализ</button><button id="refresh" class="secondary">Обновить</button><button id="check" class="secondary">Проверить подключения</button><button id="logout" class="secondary">Выйти</button></div></div><div id="readiness" class="card"><h2>Подключения</h2><p id="collectionStatus" class="muted"></p><p class="muted">В live-режиме проверка делает один короткий запрос к ИИ. Обычный отчёт — по одному запросу на акцию.</p><div id="checks"></div></div><div id="layout"><aside><h2>История</h2><div id="history"></div></aside><section id="report"><div class="card muted">Выберите отчёт или запустите новый анализ.</div></section></div></section><footer>Расчётные показатели и выводы ИИ отмечаются отдельно. Демо-режим использует синтетические данные.</footer></main>
-<script>
-'use strict';let key='',poll=null,selected=null,epoch=0;
-const $=id=>document.getElementById(id),labels={running:'Выполняется',completed:'Готов',degraded:'Готов с замечаниями',failed:'Ошибка'};
-function node(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n}
-function message(text,error=false){$('message').textContent=text;$('message').className=error?'error':'muted'}
-async function api(path,method='GET'){const r=await fetch(path,{method,headers:{Authorization:'Bearer '+key}}),d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:'Ошибка запроса');return d}
-const stamp=s=>new Date(s).toLocaleString('ru-RU');
-$('logout').onclick=()=>{epoch++;key='';clearTimeout(poll);selected=null;$('token').value='';$('login').classList.remove('hidden');$('app').classList.add('hidden');$('report').replaceChildren();$('history').replaceChildren();$('checks').replaceChildren();message('Сеанс завершён.')};
-$('loginForm').onsubmit=async e=>{e.preventDefault();key=$('token').value.trim();try{const c=await api('/api/config');$('token').value='';$('login').classList.add('hidden');$('app').classList.remove('hidden');$('mode').textContent=c.mode==='demo'?'ДЕМО · синтетические данные':'РЕАЛЬНЫЕ ИСТОЧНИКИ';const s=c.schedule,days=['понедельник','вторник','среда','четверг','пятница','суббота','воскресенье'];$('schedule').textContent=s.enabled?`${days[s.weekday]}, ${String(s.hour).padStart(2,'0')}:${String(s.minute).padStart(2,'0')} · ${s.timezone}`:'Расписание выключено';$('configNote').textContent=`Инструментов: ${c.instruments.length}. RSS-источников: ${c.news_feed_count}. ИИ: ${c.llm_enabled&&c.mode==='live'?'настроен ('+c.llm_model+'); доступность проверяется кнопкой':'выключен; выполните команду setup'}.`;message('Подключено.');await history();await readiness()}catch(e){key='';message(e.message,true)}};
-async function history(){const generation=epoch,rows=await api('/api/runs');if(generation!==epoch)return;const active=rows.find(r=>r.status==='running')?.id;$('run').disabled=Boolean(active);$('history').replaceChildren();if(!rows.length)$('history').append(node('p','Отчётов пока нет.','muted'));for(const r of rows){const b=node('button',`${stamp(r.created_at)} · ${labels[r.status]}`,'history secondary');b.onclick=()=>show(r.id).catch(e=>message(e.message,true));$('history').append(b)}clearTimeout(poll);if(active){poll=setTimeout(async()=>{try{await history();if(selected===active||!selected)await show(active)}catch(e){message(e.message,true)}},2000)}}
-function chart(candles){const vals=candles.slice(-30).map(c=>c.close),min=Math.min(...vals),span=Math.max(...vals)-min||1,svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 600 150');svg.setAttribute('role','img');svg.setAttribute('aria-label','Цены закрытия последних 30 сессий');const p=document.createElementNS(svg.namespaceURI,'polyline');p.setAttribute('points',vals.map((v,i)=>`${10+i*580/Math.max(1,vals.length-1)},${135-(v-min)/span*115}`).join(' '));p.setAttribute('fill','none');p.setAttribute('stroke','#8ce6cd');p.setAttribute('stroke-width','3');svg.append(p);return svg}
-async function show(id){selected=id;const generation=epoch,r=await api('/api/runs/'+encodeURIComponent(id));if(generation!==epoch||selected!==id)return;const target=$('report');target.replaceChildren();target.append(node('h2',labels[r.status]+' · '+stamp(r.created_at)));if(r.error)target.append(node('p',r.error,'error'));if(!r.report){target.append(node('p',r.status==='running'?'Собираем данные и формируем отчёт…':'Отчёт не сформирован.','muted'));return}const data=r.report;if(data.mode==='live'&&data.ai_complete===false)target.append(node('p','Анализ ИИ выполнен не для всех акций. Ниже сохранены доступные данные и причины.','warn'));if(data.news_collection?.collection_started_at)target.append(node('p','Архив новостей накапливается с '+stamp(data.news_collection.collection_started_at)+'. Полнота недели зависит от доступной истории лент и времени работы сервиса.','muted'));if(data.warnings.length)target.append(node('p',data.warnings.join('\n'),'warn'));for(const item of data.instruments){const c=node('article',undefined,'card');c.append(node('h3',item.key));if(item.error){c.append(node('p',item.error,'error'));target.append(c);continue}const m=item.metrics,grid=node('div',undefined,'metrics');for(const [label,value] of [['Закрытие',m.last_close.toFixed(2)],['За неделю',m.weekly_change_pct===null?'Нет данных':m.weekly_change_pct.toFixed(2)+'%'],['SMA 20',m.sma20===null?'Нет данных':m.sma20.toFixed(2)]]){const box=node('div',undefined,'metric');box.append(node('small',label),node('div',value,'value'));grid.append(box)}c.append(grid,node('small',`Последняя сессия: ${m.last_date}. База недельного изменения: ${m.weekly_baseline_date||'недоступна'}.`),chart(item.candles),node('p','Цены закрытия · последние 30 доступных сессий','muted'),node('p',item.analysis_kind==='ai'?'Интерпретация ИИ':'Расчётная сводка','tag'),node('p',item.summary,'summary'));if(item.ai?.risks?.length){c.append(node('h3','Риски и неопределённости'));const list=node('ul');item.ai.risks.forEach(x=>list.append(node('li',x)));c.append(list)}c.append(node('h3','Новостные источники'));if(!item.news.length)c.append(node('p','Подходящих записей нет.','muted'));for(const n of item.news){const p=node('p'),a=node('a',n.title);try{const u=new URL(n.url);if(['https:','http:'].includes(u.protocol)){a.href=u.href;a.target='_blank';a.rel='noopener noreferrer'}}catch{}p.append(a,node('br'),node('small',`${stamp(n.published_at)} · [${n.id}]`),node('span',n.excerpt?' — '+n.excerpt.slice(0,240):'','muted'));c.append(p)}target.append(c)}}
-$('refresh').onclick=()=>Promise.all([history(),readiness()]).catch(e=>message(e.message,true));$('run').onclick=async()=>{$('run').disabled=true;try{const r=await api('/api/runs','POST');message('Анализ запущен.');await show(r.id);await history()}catch(e){message(e.message,true);$('run').disabled=false}};
-async function readiness(){const generation=epoch;const s=await api('/api/status');if(generation!==epoch)return;const n=s.news;$('collectionStatus').textContent=s.mode==='demo'?'Демонстрационный режим: реальные источники не опрашиваются.':n.last_checked_at?`Последний сбор: ${stamp(n.last_checked_at)}. Получено записей: ${n.item_count}. Архив с ${stamp(n.collection_started_at)}.`:'Первый сбор новостей ещё выполняется.';if(s.diagnostic)renderChecks(s.diagnostic)}
-function renderChecks(result){$('checks').replaceChildren();$('checks').append(node('p',result.ready?'Все проверенные подключения работают.':'Есть проблемы подключения.','tag'));for(const c of result.checks)$('checks').append(node('p',(c.ok?'✓ ':'✕ ')+c.name+': '+c.detail,c.ok?'muted':'warn'))}
-$('check').onclick=async()=>{const generation=epoch;$('check').disabled=true;message('Проверяем биржу, новости и ответ ИИ…');try{const result=await api('/api/check','POST');if(generation!==epoch)return;renderChecks(result);await readiness();message(result.ready?'Проверка завершена. Можно запускать анализ.':'Проверка завершена с замечаниями.',!result.ready)}catch(e){if(generation===epoch)message(e.message,true)}finally{$('check').disabled=false}};
-</script></body></html>
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>План по акциям MOEX</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font: 16px/1.6 system-ui;
+        color: #e4eaf0;
+        background: #101722;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      main {
+        max-width: 1100px;
+        margin: auto;
+        padding: 32px 22px;
+      }
+      h1 {
+        font-size: 30px;
+        letter-spacing: -1px;
+        margin: 0;
+      }
+      h2 {
+        font-size: 22px;
+      }
+      h3 {
+        font-size: 18px;
+      }
+      .muted,
+      small {
+        color: #a3b2c3;
+      }
+      .tag {
+        font-size: 12px;
+        letter-spacing: 2px;
+        color: #63d4be;
+      }
+      .card {
+        background: #182332;
+        border: 1px solid #2c3b4f;
+        border-radius: 16px;
+        padding: 24px;
+        margin: 20px 0;
+      }
+      .toolbar {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      input,
+      button {
+        font: inherit;
+        border-radius: 8px;
+        padding: 10px 14px;
+      }
+      input {
+        background: #101722;
+        border: 1px solid #506178;
+        color: inherit;
+        max-width: 100%;
+        width: 380px;
+      }
+      button {
+        background: #8ce6cd;
+        color: #122b26;
+        border: 0;
+        cursor: pointer;
+        font-weight: 650;
+      }
+      button.secondary {
+        background: #2b3d52;
+        color: #e4eaf0;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: wait;
+      }
+      .warn {
+        border-left: 3px solid #e9be64;
+        padding: 8px 14px;
+        background: #302b23;
+        color: #eed8a7;
+        white-space: pre-wrap;
+      }
+      .error {
+        color: #ffb3b3;
+      }
+      #layout {
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr);
+        gap: 24px;
+      }
+      .history {
+        width: 100%;
+        text-align: left;
+        display: block;
+        margin-bottom: 10px;
+        font-size: 14px;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+      .metric {
+        background: #101722;
+        border-radius: 8px;
+        padding: 12px;
+      }
+      .value {
+        font-size: 23px;
+        color: #8ce6cd;
+      }
+      .summary {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      a {
+        color: #8ce6cd;
+      }
+      svg {
+        width: 100%;
+        height: 150px;
+        margin-top: 12px;
+      }
+      .hidden {
+        display: none;
+      }
+      footer {
+        padding: 20px 0;
+        color: #a3b2c3;
+        font-size: 13px;
+      }
+      @media (max-width: 750px) {
+        #layout {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .metrics {
+          grid-template-columns: 1fr;
+        }
+        main {
+          padding: 22px 16px;
+        }
+        .card {
+          padding: 18px;
+        }
+      }
+      #report,
+      aside,
+      .card {
+        min-width: 0;
+      }
+      .warn {
+        overflow-wrap: anywhere;
+      }
+      select,
+      textarea {
+        font: inherit;
+        background: #101722;
+        color: inherit;
+        border: 1px solid #506178;
+        border-radius: 8px;
+        padding: 10px;
+        width: 100%;
+      }
+      label {
+        display: block;
+      }
+      label input {
+        width: 100%;
+      }
+      .fields {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 18px;
+      }
+      .fields small {
+        display: block;
+      }
+      textarea {
+        min-height: 90px;
+      }
+      input[type="checkbox"] {
+        width: auto;
+      }
+      .holding {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin: 10px 0;
+      }
+      .holding input {
+        width: 150px;
+      }
+      .holding select {
+        max-width: 220px;
+      }
+      .buy {
+        color: #8ce6cd;
+      }
+      .sell {
+        color: #ffb3b3;
+      }
+      .scroll {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+      th,
+      td {
+        padding: 10px;
+        text-align: left;
+        border-bottom: 1px solid #2c3b4f;
+      }
+      td a {
+        white-space: nowrap;
+      }
+      .plan {
+        border: 1px solid #506178;
+        padding: 16px;
+        border-radius: 12px;
+        margin-top: 18px;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible {
+        outline: 2px solid #8ce6cd;
+        outline-offset: 3px;
+      }
+      @media (max-width: 750px) {
+        .fields {
+          grid-template-columns: 1fr;
+        }
+        .holding {
+          flex-wrap: wrap;
+        }
+        .holding input {
+          width: 110px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="tag">MARKET AGENT / WEEKLY RESEARCH</div>
+      <h1>План по акциям MOEX</h1>
+      <div class="muted">
+        Бюджет, новости и обоснованные сценарии покупки, продажи или ожидания
+      </div>
+      <section class="card" id="login">
+        <h2>Подключение</h2>
+        <p class="muted">
+          Введите API_TOKEN из .env. Ключ хранится только в памяти вкладки.
+        </p>
+        <form id="loginForm" class="toolbar">
+          <input
+            id="token"
+            type="password"
+            aria-label="API token"
+            placeholder="API token"
+            autocomplete="off"
+            required
+          /><button>Подключиться</button>
+        </form>
+      </section>
+      <p id="message" role="status" aria-live="polite"></p>
+      <section id="app" class="hidden">
+        <div class="card">
+          <strong id="mode"></strong>
+          <p id="schedule" class="muted"></p>
+          <p id="configNote" class="muted"></p>
+          <div class="toolbar">
+            <button id="run">Запустить анализ</button
+            ><button id="refresh" class="secondary">Обновить</button
+            ><button id="check" class="secondary">Проверить подключения</button
+            ><button id="logout" class="secondary">Выйти</button>
+          </div>
+        </div>
+        <section class="card" id="profileCard">
+          <h2>Ваши условия</h2>
+          <p class="muted">
+            Сохранённый профиль используется для ручного и еженедельного
+            анализа. Данные обновляйте после реальных сделок. До заполнения
+            профиля расписание создаёт только обзоры.
+          </p>
+          <form id="profileForm">
+            <div class="fields">
+              <label
+                >Свободные деньги, ₽<input
+                  id="cash"
+                  type="number"
+                  min="0"
+                  max="1000000000"
+                  step="0.01"
+                  required
+                  placeholder="Например, 100000"
+                /><small
+                  >Деньги на новые покупки, без стоимости имеющихся
+                  акций.</small
+                ></label
+              >
+              <label
+                >Срок вложения, дней<input
+                  id="horizon"
+                  type="number"
+                  min="7"
+                  max="365"
+                  value="30"
+                  required
+                /><small
+                  >От 7 до 365 дней. Это горизонт идеи, а не срок действия
+                  цены.</small
+                ></label
+              >
+              <label
+                >Уровень риска<select id="risk">
+                  <option value="conservative">Осторожный</option>
+                  <option value="balanced" selected>Умеренный</option>
+                  <option value="aggressive">Высокий</option>
+                </select></label
+              >
+            </div>
+            <p id="riskRules" class="muted"></p>
+            <label
+              ><input id="portfolioKnown" type="checkbox" /> Я укажу все
+              имеющиеся акции; если акций нет — оставлю список пустым.</label
+            >
+            <p class="muted">
+              Без этой отметки покупки — модельный сценарий, продажи не
+              рассчитываются. Позиции вводятся в штуках, не в лотах. Если есть
+              бумаги вне списка, сначала расширьте markets.live.json.
+            </p>
+            <div id="holdings"></div>
+            <button id="addHolding" type="button" class="secondary">
+              Добавить позицию
+            </button>
+            <p>
+              <label
+                >Дополнительные пожелания<textarea
+                  id="notes"
+                  maxlength="1500"
+                  placeholder="Например: хочу избегать компаний, по которым мало новостей"
+                ></textarea>
+              </label>
+            </p>
+            <p class="muted">
+              Пожелания помогают модели объяснить выбор; обязательные числовые
+              ограничения задаются полями выше. Для анализа профиль и позиции
+              передаются настроенной модели. Сделки программа не совершает.
+            </p>
+            <button id="saveProfile">Сохранить условия</button
+            ><span id="profileState" class="muted" role="status"></span>
+          </form>
+        </section>
+        <div id="readiness" class="card">
+          <h2>Подключения</h2>
+          <p id="collectionStatus" class="muted"></p>
+          <p class="muted">
+            Проверка делает один короткий запрос к ИИ. План по профилю
+            отправляет подходящие акции одним запросом; при HTTP 503 возможны
+            ещё две попытки.
+          </p>
+          <div id="checks"></div>
+        </div>
+        <div id="layout">
+          <aside>
+            <h2>История</h2>
+            <div id="history"></div>
+          </aside>
+          <section id="report">
+            <div class="card muted">
+              Выберите отчёт или запустите новый анализ.
+            </div>
+          </section>
+        </div>
+      </section>
+      <footer>
+        Расчётные показатели и выводы ИИ отмечаются отдельно. Демо-режим
+        использует синтетические данные.
+      </footer>
+    </main>
+    <script>
+      "use strict";
+      let key = "",
+        poll = null,
+        selected = null,
+        epoch = 0,
+        profileDirty = false,
+        hasProfile = false,
+        activeRun = false,
+        instruments = [],
+        policies = {};
+      const $ = (id) => document.getElementById(id),
+        labels = {
+          running: "Выполняется",
+          completed: "Готов",
+          degraded: "Готов с замечаниями",
+          failed: "Ошибка",
+        };
+      function node(tag, text, cls) {
+        const n = document.createElement(tag);
+        if (text !== undefined) n.textContent = text;
+        if (cls) n.className = cls;
+        return n;
+      }
+      function message(text, error = false) {
+        $("message").textContent = text;
+        $("message").className = error ? "error" : "muted";
+      }
+      async function api(path, method = "GET", body) {
+        const r = await fetch(path, {
+            method,
+            headers: {
+              Authorization: "Bearer " + key,
+              "Content-Type": "application/json",
+            },
+            body: body === undefined ? undefined : JSON.stringify(body),
+          }),
+          d = await r.json();
+        if (!r.ok)
+          throw Error(
+            typeof d.detail === "string" ? d.detail : "Ошибка запроса",
+          );
+        return d;
+      }
+      const stamp = (s) => new Date(s).toLocaleString("ru-RU");
+      $("logout").onclick = () => {
+        epoch++;
+        key = "";
+        clearTimeout(poll);
+        selected = null;
+        hasProfile = false;
+        profileDirty = false;
+        $("holdings").replaceChildren();
+        $("notes").value = "";
+        $("cash").value = "";
+        $("token").value = "";
+        $("login").classList.remove("hidden");
+        $("app").classList.add("hidden");
+        $("report").replaceChildren();
+        $("history").replaceChildren();
+        $("checks").replaceChildren();
+        message("Сеанс завершён.");
+      };
+      $("loginForm").onsubmit = async (e) => {
+        e.preventDefault();
+        key = $("token").value.trim();
+        try {
+          const c = await api("/api/config");
+          $("token").value = "";
+          $("login").classList.add("hidden");
+          $("app").classList.remove("hidden");
+          $("mode").textContent =
+            c.mode === "demo"
+              ? "ДЕМО · синтетические данные"
+              : "РЕАЛЬНЫЕ ИСТОЧНИКИ";
+          const s = c.schedule,
+            days = [
+              "понедельник",
+              "вторник",
+              "среда",
+              "четверг",
+              "пятница",
+              "суббота",
+              "воскресенье",
+            ];
+          $("schedule").textContent = s.enabled
+            ? `${days[s.weekday]}, ${String(s.hour).padStart(2, "0")}:${String(s.minute).padStart(2, "0")} · ${s.timezone}`
+            : "Расписание выключено";
+          $("configNote").textContent =
+            `Инструментов: ${c.instruments.length}. RSS-источников: ${c.news_feed_count}. ИИ: ${c.llm_enabled && c.mode === "live" ? "настроен (" + c.llm_model + "); доступность проверяется кнопкой" : "выключен; выполните команду setup"}.`;
+          await loadProfile(c);
+          message("Подключено.");
+          await history();
+          await readiness();
+        } catch (e) {
+          key = "";
+          message(e.message, true);
+        }
+      };
+      async function history() {
+        const generation = epoch,
+          rows = await api("/api/runs");
+        if (generation !== epoch) return;
+        const active = rows.find((r) => r.status === "running")?.id;
+        activeRun = Boolean(active);
+        updateRunButton();
+        $("history").replaceChildren();
+        if (!rows.length)
+          $("history").append(node("p", "Отчётов пока нет.", "muted"));
+        for (const r of rows) {
+          const b = node(
+            "button",
+            `${stamp(r.created_at)} · ${labels[r.status]}`,
+            "history secondary",
+          );
+          b.onclick = () => show(r.id).catch((e) => message(e.message, true));
+          $("history").append(b);
+        }
+        clearTimeout(poll);
+        if (active) {
+          poll = setTimeout(async () => {
+            try {
+              await history();
+              if (selected === active || !selected) await show(active);
+            } catch (e) {
+              message(e.message, true);
+            }
+          }, 2000);
+        }
+      }
+      function chart(candles) {
+        const vals = candles.slice(-30).map((c) => c.close),
+          min = Math.min(...vals),
+          span = Math.max(...vals) - min || 1,
+          svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 600 150");
+        svg.setAttribute("role", "img");
+        svg.setAttribute("aria-label", "Цены закрытия последних 30 сессий");
+        const p = document.createElementNS(svg.namespaceURI, "polyline");
+        p.setAttribute(
+          "points",
+          vals
+            .map(
+              (v, i) =>
+                `${10 + (i * 580) / Math.max(1, vals.length - 1)},${135 - ((v - min) / span) * 115}`,
+            )
+            .join(" "),
+        );
+        p.setAttribute("fill", "none");
+        p.setAttribute("stroke", "#8ce6cd");
+        p.setAttribute("stroke-width", "3");
+        svg.append(p);
+        return svg;
+      }
+      async function show(id) {
+        selected = id;
+        const generation = epoch,
+          r = await api("/api/runs/" + encodeURIComponent(id));
+        if (generation !== epoch || selected !== id) return;
+        const target = $("report");
+        target.replaceChildren();
+        target.append(
+          node("h2", labels[r.status] + " · " + stamp(r.created_at)),
+        );
+        if (r.error) target.append(node("p", r.error, "error"));
+        if (!r.report) {
+          target.append(
+            node(
+              "p",
+              r.status === "running"
+                ? "Собираем данные и формируем отчёт…"
+                : "Отчёт не сформирован.",
+              "muted",
+            ),
+          );
+          return;
+        }
+        const data = r.report;
+        if (data.mode === "live" && data.ai_complete === false)
+          target.append(
+            node(
+              "p",
+              "Анализ ИИ выполнен не для всех акций. Ниже сохранены доступные данные и причины.",
+              "warn",
+            ),
+          );
+        if (data.allocation) renderPlan(target, data);
+        if (data.news_collection?.collection_started_at)
+          target.append(
+            node(
+              "p",
+              "Архив новостей накапливается с " +
+                stamp(data.news_collection.collection_started_at) +
+                ". Полнота недели зависит от доступной истории лент и времени работы сервиса.",
+              "muted",
+            ),
+          );
+        if (data.warnings.length)
+          target.append(node("p", data.warnings.join("\n"), "warn"));
+        for (const item of data.instruments) {
+          const c = node("article", undefined, "card");
+          c.id = "instrument-" + item.instrument.symbol;
+          c.append(node("h3", item.key));
+          if (item.recommendation) renderRecommendation(c, item);
+          if (item.error) {
+            c.append(node("p", item.error, "error"));
+            target.append(c);
+            continue;
+          }
+          const m = item.metrics,
+            grid = node("div", undefined, "metrics");
+          for (const [label, value] of [
+            ["Закрытие", m.last_close.toFixed(2)],
+            [
+              "За неделю",
+              m.weekly_change_pct === null
+                ? "Нет данных"
+                : m.weekly_change_pct.toFixed(2) + "%",
+            ],
+            ["SMA 20", m.sma20 === null ? "Нет данных" : m.sma20.toFixed(2)],
+          ]) {
+            const box = node("div", undefined, "metric");
+            box.append(node("small", label), node("div", value, "value"));
+            grid.append(box);
+          }
+          c.append(
+            grid,
+            node(
+              "small",
+              `Последняя сессия: ${m.last_date}. База недельного изменения: ${m.weekly_baseline_date || "недоступна"}.`,
+            ),
+            chart(item.candles),
+            node("p", "Цены закрытия · последние 30 доступных сессий", "muted"),
+            node(
+              "p",
+              item.analysis_kind === "ai"
+                ? "Интерпретация ИИ"
+                : "Расчётная сводка",
+              "tag",
+            ),
+            node("p", item.summary, "summary"),
+          );
+          if (item.ai?.risks?.length) {
+            c.append(node("h3", "Риски и неопределённости"));
+            const list = node("ul");
+            item.ai.risks.forEach((x) => list.append(node("li", x)));
+            c.append(list);
+          }
+          c.append(node("h3", "Новостные источники"));
+          if (!item.news.length)
+            c.append(node("p", "Подходящих записей нет.", "muted"));
+          for (const n of item.news) {
+            const p = node("p"),
+              a = node("a", n.title);
+            try {
+              const u = new URL(n.url);
+              if (["https:", "http:"].includes(u.protocol)) {
+                a.href = u.href;
+                a.target = "_blank";
+                a.rel = "noopener noreferrer";
+              }
+            } catch {}
+            p.append(
+              a,
+              node("br"),
+              node("small", `${stamp(n.published_at)} · [${n.id}]`),
+              node(
+                "span",
+                n.excerpt ? " — " + n.excerpt.slice(0, 240) : "",
+                "muted",
+              ),
+            );
+            c.append(p);
+          }
+          target.append(c);
+        }
+      }
+      $("refresh").onclick = () =>
+        Promise.all([history(), readiness()]).catch((e) =>
+          message(e.message, true),
+        );
+      $("run").onclick = async () => {
+        $("run").disabled = true;
+        try {
+          const r = await api("/api/runs", "POST");
+          message("Анализ запущен по сохранённому профилю.");
+          await show(r.id);
+          await history();
+        } catch (e) {
+          message(e.message, true);
+          updateRunButton();
+        }
+      };
+      async function readiness() {
+        const generation = epoch;
+        const s = await api("/api/status");
+        if (generation !== epoch) return;
+        const n = s.news;
+        $("collectionStatus").textContent =
+          s.mode === "demo"
+            ? "Демонстрационный режим: реальные источники не опрашиваются."
+            : n.last_checked_at
+              ? `Последний сбор: ${stamp(n.last_checked_at)}. Получено записей: ${n.item_count}. Архив с ${stamp(n.collection_started_at)}.`
+              : "Первый сбор новостей ещё выполняется.";
+        if (s.diagnostic) renderChecks(s.diagnostic);
+      }
+      function renderChecks(result) {
+        $("checks").replaceChildren();
+        $("checks").append(
+          node(
+            "p",
+            result.ready
+              ? "Все проверенные подключения работают."
+              : "Есть проблемы подключения.",
+            "tag",
+          ),
+        );
+        for (const c of result.checks)
+          $("checks").append(
+            node(
+              "p",
+              (c.ok ? "✓ " : "✕ ") + c.name + ": " + c.detail,
+              c.ok ? "muted" : "warn",
+            ),
+          );
+      }
+      $("check").onclick = async () => {
+        const generation = epoch;
+        $("check").disabled = true;
+        message("Проверяем биржу, новости и ответ ИИ…");
+        try {
+          const result = await api("/api/check", "POST");
+          if (generation !== epoch) return;
+          renderChecks(result);
+          await readiness();
+          message(
+            result.ready
+              ? "Проверка завершена. Можно запускать анализ."
+              : "Проверка завершена с замечаниями.",
+            !result.ready,
+          );
+        } catch (e) {
+          if (generation === epoch) message(e.message, true);
+        } finally {
+          $("check").disabled = false;
+        }
+      };
+
+      const riskNames = {
+          conservative: "Осторожный",
+          balanced: "Умеренный",
+          aggressive: "Высокий",
+        },
+        actionNames = { buy: "КУПИТЬ", sell: "ПРОДАТЬ", wait: "ЖДАТЬ" };
+      const rub = (v) =>
+        v === null
+          ? "Нет оценки"
+          : Number(v).toLocaleString("ru-RU", { maximumFractionDigits: 2 }) +
+            " ₽";
+      function updateRunButton() {
+        $("run").disabled = activeRun || profileDirty || !hasProfile;
+      }
+      function dirtyProfile() {
+        profileDirty = true;
+        $("profileState").textContent = " Есть несохранённые изменения.";
+        updateRunButton();
+      }
+      function showRisk() {
+        const r = policies[$("risk").value];
+        if (!r) return;
+        $("riskRules").textContent =
+          `Лимиты: до ${r.position_pct}% расчётного капитала в одной бумаге; до ${r.deploy_cash_pct}% свободных денег на все покупки; расчётный риск новой идеи до ${r.idea_risk_pct}%, всех новых покупок до ${r.total_risk_pct}%. Это ограничения расчёта, а не гарантия максимального убытка.`;
+      }
+      function addHolding(h = {}) {
+        const row = node("div", undefined, "holding"),
+          select = node("select"),
+          qty = node("input"),
+          remove = node("button", "Убрать", "secondary");
+        select.setAttribute("aria-label", "Тикер позиции");
+        for (const i of instruments) {
+          const o = node("option", i.symbol);
+          o.value = i.symbol;
+          select.append(o);
+        }
+        if (h.symbol) select.value = h.symbol;
+        qty.type = "number";
+        qty.min = "1";
+        qty.max = "1000000000";
+        qty.step = "1";
+        qty.required = true;
+        qty.placeholder = "Штук";
+        qty.setAttribute("aria-label", "Количество акций");
+        qty.value = h.shares || "";
+        remove.type = "button";
+        remove.onclick = () => {
+          row.remove();
+          dirtyProfile();
+        };
+        row.append(select, qty, remove);
+        $("holdings").append(row);
+      }
+      async function loadProfile(c) {
+        instruments = c.instruments;
+        const d = await api("/api/profile");
+        policies = d.risk_policies;
+        const p = d.saved?.profile;
+        hasProfile = Boolean(p);
+        profileDirty = false;
+        $("holdings").replaceChildren();
+        $("cash").value = p?.cash_rub ?? "";
+        $("horizon").value = p?.horizon_days ?? 30;
+        $("risk").value = p?.risk ?? "balanced";
+        $("portfolioKnown").checked = p?.portfolio_known ?? false;
+        $("notes").value = p?.notes ?? "";
+        for (const h of p?.holdings || []) addHolding(h);
+        $("addHolding").disabled = !$("portfolioKnown").checked;
+        $("profileState").textContent = p
+          ? " Сохранено " + stamp(d.saved.updated_at)
+          : " Заполните условия перед первым планом.";
+        showRisk();
+        updateRunButton();
+      }
+      $("profileForm").addEventListener("input", () => {
+        dirtyProfile();
+        showRisk();
+      });
+      $("profileForm").addEventListener("change", dirtyProfile);
+      $("portfolioKnown").onchange = () => {
+        $("addHolding").disabled = !$("portfolioKnown").checked;
+        if (!$("portfolioKnown").checked) $("holdings").replaceChildren();
+      };
+      $("addHolding").onclick = () => {
+        addHolding();
+        dirtyProfile();
+      };
+      $("profileForm").onsubmit = async (e) => {
+        e.preventDefault();
+        const generation = epoch;
+        const profile = {
+          cash_rub: Number($("cash").value),
+          horizon_days: Number($("horizon").value),
+          risk: $("risk").value,
+          portfolio_known: $("portfolioKnown").checked,
+          notes: $("notes").value,
+          holdings: [...$("holdings").children].map((row) => ({
+            symbol: row.querySelector("select").value,
+            shares: Number(row.querySelector("input").value),
+          })),
+        };
+        $("saveProfile").disabled = true;
+        try {
+          const saved = await api("/api/profile", "POST", profile);
+          if (generation !== epoch) return;
+          hasProfile = true;
+          profileDirty = false;
+          $("profileState").textContent =
+            " Сохранено " + stamp(saved.updated_at);
+          message("Условия сохранены. Можно сформировать план.");
+          updateRunButton();
+        } catch (e) {
+          message(e.message, true);
+        } finally {
+          $("saveProfile").disabled = false;
+        }
+      };
+      function renderPlan(target, data) {
+        const a = data.allocation,
+          p = data.profile.profile,
+          box = node("section", undefined, "card");
+        box.append(
+          node("h3", "План по сохранённым условиям"),
+          node(
+            "p",
+            `Свободно: ${rub(p.cash_rub)} · Срок: ${p.horizon_days} дней · Риск: ${riskNames[p.risk]}. Профиль от ${stamp(data.profile.updated_at)}.`,
+          ),
+        );
+        if (!p.portfolio_known)
+          box.append(
+            node(
+              "p",
+              "Модельный сценарий: существующий портфель не учтён.",
+              "warn",
+            ),
+          );
+        box.append(
+          node(
+            "p",
+            `План покупок: ${rub(a.planned_buys_rub)}. Остаток денег: ${rub(a.cash_after_buys_rub)}. Расчётный риск новых покупок: ${rub(a.new_positions_risk_rub)}.`,
+          ),
+          node("p", a.notice, "muted"),
+          node(
+            "p",
+            "Правила " +
+              a.rule_version +
+              " не прошли историческую проверку доходности. Данные RSS не заменяют изучение полной отчётности.",
+            "muted",
+          ),
+        );
+        const wrap = node("div", undefined, "scroll"),
+          table = node("table"),
+          head = node("tr");
+        ["Акция", "Решение", "Штук", "Лотов", "Сумма, оценка"].forEach((t) =>
+          head.append(node("th", t)),
+        );
+        table.append(head);
+        for (const e of data.instruments) {
+          const r = e.recommendation;
+          if (!r) continue;
+          const tr = node("tr"),
+            td = node("td"),
+            link = node("a", e.instrument.symbol);
+          link.href = "#instrument-" + e.instrument.symbol;
+          td.append(link);
+          tr.append(
+            td,
+            node("td", actionNames[r.action], r.action),
+            node("td", String(r.shares)),
+            node("td", String(r.lots)),
+            node("td", rub(r.estimated_cash_rub)),
+          );
+          table.append(tr);
+        }
+        wrap.append(table);
+        box.append(wrap);
+        target.append(box);
+      }
+      function renderRecommendation(target, item) {
+        const r = item.recommendation,
+          box = node("div", undefined, "plan");
+        box.append(
+          node(
+            "strong",
+            `${actionNames[r.action]} · ${r.shares} шт. (${r.lots} лотов)`,
+            r.action,
+          ),
+        );
+        if (r.scenario_only)
+          box.append(
+            node(
+              "p",
+              "Модельный сценарий без учёта существующих вложений.",
+              "muted",
+            ),
+          );
+        if (r.action === "buy")
+          box.append(
+            node(
+              "p",
+              `Диапазон для проверки перед покупкой: ${rub(r.entry_min)} — ${rub(r.entry_max)}. Уровень пересмотра при падении: ${rub(r.review_stop_price)}. Сумма с резервом комиссии: ${rub(r.estimated_cash_rub)}.`,
+            ),
+          );
+        if (r.action === "sell")
+          box.append(
+            node(
+              "p",
+              `Оценка выручки: ${rub(r.estimated_cash_rub)}. Количество взято из введённого портфеля.`,
+            ),
+          );
+        if (r.proposed_action !== r.action)
+          box.append(
+            node(
+              "p",
+              `Предложение ИИ «${actionNames[r.proposed_action]}» отклонено проверками.`,
+              "muted",
+            ),
+          );
+        box.append(node("p", r.reasons.join(". ")));
+        if (r.action !== "wait")
+          box.append(
+            node(
+              "small",
+              `Пересчитать не позднее ${stamp(r.valid_until)} и при изменении цены/портфеля. Цена сделки не гарантируется.`,
+            ),
+          );
+        target.append(box);
+      }
+    </script>
+  </body>
+</html>

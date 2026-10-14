@@ -28,6 +28,10 @@ class Store:
                     id INTEGER PRIMARY KEY, checked_at TEXT NOT NULL, feed_key TEXT NOT NULL,
                     item_count INTEGER NOT NULL, warnings TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS investor_profile (
+                    id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
             """)
 
     @contextmanager
@@ -93,6 +97,19 @@ class Store:
                     (limit,),
                 )
             ]
+
+    def profile(self):
+        with self.connect() as db:
+            row = db.execute("SELECT payload,updated_at FROM investor_profile WHERE id=1").fetchone()
+        return {"profile": json.loads(row["payload"]), "updated_at": row["updated_at"]} if row else None
+
+    def save_profile(self, profile):
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO investor_profile VALUES(1,?,?)",
+                (profile.model_dump_json(), datetime.now(timezone.utc).isoformat()),
+            )
+        return self.profile()
 
     def cache_news(self, items, feeds, checked_at, warnings):
         checked_at = checked_at.astimezone(timezone.utc)

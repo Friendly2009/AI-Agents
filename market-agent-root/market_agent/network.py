@@ -25,6 +25,8 @@ def error_message(status, body):
         return "Доступ запрещён (HTTP 403). Проверьте разрешения ключа, проект и доступность источника."
     if status == 404:
         return "Источник или модель не найдены (HTTP 404). Проверьте LLM_MODEL и адрес API."
+    if status == 503 and "high demand" in text:
+        return "Модель перегружена (HTTP 503): провайдер сообщил high demand. Повторите позже."
     if status >= 500:
         return f"Временная ошибка сервиса (HTTP {status}). Повторите позже."
     if status == 400:
@@ -37,13 +39,15 @@ class HTTP:
         self.client, self.retries = client, retries
 
     async def fetch(self, method, url, **kwargs) -> bytes:
-        # A failed generative POST is not automatically repeated: it may have
-        # consumed quota already. GET retries are safe and bounded.
-        retries = self.retries if method.upper() == "GET" else 0
+        # GET retries are bounded. A generative POST is repeated only on an
+        # explicit HTTP 503 and only if the caller opted in; never after a timeout.
+        retry_503 = kwargs.pop("retry_503", 0)
+        retries = self.retries if method.upper() == "GET" else retry_503
         for attempt in range(retries + 1):
             try:
                 async with self.client.stream(method, url, **kwargs) as response:
-                    if (response.status_code == 429 or response.status_code >= 500) and attempt < retries:
+                    retryable = (response.status_code == 429 or response.status_code >= 500) if method.upper() == "GET" else response.status_code == 503
+                    if retryable and attempt < retries:
                         try:
                             delay = min(30, max(1, float(response.headers.get("Retry-After", 2**attempt))))
                         except ValueError:
@@ -61,7 +65,7 @@ class HTTP:
                         raise SourceError(error_message(response.status_code, body), response.status_code)
                     return body
             except httpx.RequestError as exc:
-                if attempt == retries:
+                if method.upper() != "GET" or attempt == retries:
                     raise SourceError("Источник недоступен или истекло время ожидания") from exc
                 await asyncio.sleep(min(2**attempt, 4))
         raise SourceError("Источник недоступен")

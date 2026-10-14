@@ -12,7 +12,12 @@ def metrics(candles):
     previous_volumes = [c.volume for c in candles[-21:-1]]
     average_volume = sum(previous_volumes) / len(previous_volumes) if previous_volumes else 0
     ma20 = sum(c.close for c in candles[-20:]) / 20 if len(candles) >= 20 else None
+    ranges = [max(c.high - c.low, abs(c.high - prev.close), abs(c.low - prev.close))
+              for prev, c in zip(candles, candles[1:])]
     return {
+        "atr14": round(sum(ranges[-14:]) / 14, 6) if len(ranges) >= 14 else None,
+        "sma60": round(sum(c.close for c in candles[-60:]) / 60, 6) if len(candles) >= 60 else None,
+        "average_turnover20": round(sum(c.close * c.volume for c in candles[-20:]) / min(20, len(candles)), 2),
         "last_date": last.day.isoformat(),
         "last_close": last.close,
         "weekly_baseline_date": baseline.day.isoformat() if baseline else None,

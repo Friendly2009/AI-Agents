@@ -5,8 +5,11 @@ if not exist ".venv\Scripts\python.exe" (
   python -m venv .venv
   if errorlevel 1 goto fail
 )
-".venv\Scripts\python.exe" -m pip install -e ".[dev]"
-if errorlevel 1 goto fail
+".venv\Scripts\python.exe" -c "from importlib.metadata import version; assert version('weekly-market-agent') == '0.3.0'; import fastapi, httpx, pydantic_settings, defusedxml" >nul 2>&1
+if errorlevel 1 (
+  ".venv\Scripts\python.exe" -m pip install -e ".[dev]"
+  if errorlevel 1 goto fail
+)
 ".venv\Scripts\python.exe" -m market_agent setup
 if errorlevel 1 goto fail
 echo.

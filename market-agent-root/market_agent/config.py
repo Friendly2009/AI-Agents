@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     llm_enabled: bool = False
     llm_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     llm_api_key: SecretStr = SecretStr("")
-    llm_model: str = "gemini-2.5-flash"
+    llm_model: str = "gemini-3.8-flash"
     llm_timeout_seconds: float = Field(default=90, ge=10, le=180)
     news_poll_minutes: int = Field(default=30, ge=5, le=1440)
     news_collection_enabled: bool = True
