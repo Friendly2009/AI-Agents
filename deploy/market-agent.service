@@ -1,0 +1,24 @@
+# Adjust paths and user before installing in /etc/systemd/system/.
+[Unit]
+Description=Weekly Market Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=market-agent
+Group=market-agent
+WorkingDirectory=/opt/market-agent
+ExecStart=/opt/market-agent/.venv/bin/python -m market_agent serve
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/market-agent/data
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+{
+  "instruments": [
+    {"exchange": "MOEX", "symbol": "SBER", "board": "TQBR", "keywords": ["Сбер", "Сбера", "Сберу", "Сбером", "Сбербанк", "Сбербанка", "Сбербанку", "Сбербанком", "Sber"]},
+    {"exchange": "MOEX", "symbol": "GAZP", "board": "TQBR", "keywords": ["Газпром", "Газпрома", "Газпрому", "Газпромом", "Gazprom"]}
+  ],
+  "news_feeds": [
+    "https://www.vedomosti.ru/rss/rubric/business",
+    "https://www.vedomosti.ru/rss/rubric/finance"
+  ]
+}

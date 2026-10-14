@@ -1,0 +1,7 @@
+{
+  "instruments": [
+    {"exchange": "MOEX", "symbol": "SBER", "board": "TQBR", "keywords": ["Сбер", "Сбербанк", "Sber"]},
+    {"exchange": "MOEX", "symbol": "GAZP", "board": "TQBR", "keywords": ["Газпром", "Gazprom"]}
+  ],
+  "news_feeds": []
+}
