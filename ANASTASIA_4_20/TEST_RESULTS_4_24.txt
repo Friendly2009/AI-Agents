@@ -1,0 +1,19 @@
+Проверка 4.24 DELIVERY, 16.11.2026
+Команда в чистом каталоге релиза:
+python -X utf8 -m pytest -q --disable-warnings --junitxml=TEST_RESULTS_4_24.xml
+Результат: 289 passed, 10 subtests passed in 4.31s. Exit code 0.
+
+Windows, Python 3.14.2 (64 bit)
+Telethon 1.45.0; OpenAI 3.51.0; pytest 9.2.0; python-dotenv 1.2.4.
+Внешние сетевые соединения запрещены tests/conftest.py.
+Реальные Telegram-аккаунты и API-ключи не использовались.
+
+Дополнительно: AST-разбор всех Python-файлов; шесть запусков автономного симулятора.
+При лимите 3: три имитированных обращения, два blocked_by_policy.
+При лимите 5: пять имитированных обращений.
+Timeout/ConnectionError: uncertain, без автоповтора.
+PeerFlood/FloodWait: failed и постоянный общий запрет исходящих.
+Во всех симуляциях external_deliveries=0.
+Подробности: SIMULATION_RESULTS_4_24.json; машинный отчёт pytest: TEST_RESULTS_4_24.xml.
+
+Проверены исходники и тестовые транспорты. Проверка реальной доставки Telegram не выполнялась.

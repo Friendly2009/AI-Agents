@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from urllib.request import Request, urlopen
 from urllib.parse import urlparse
 
@@ -31,16 +32,26 @@ def _config(city):
     return base, email, key, branch, source
 
 
-def _create(customer):
+def normalized_phone(value):
+    digits = re.sub(r'\D', '', str(value))
+    if len(digits)==11 and digits[0]=='8':
+        digits='7'+digits[1:]
+    if not 10 <= len(digits) <= 15:
+        raise ValueError('Invalid phone')
+    return digits
+
+
+def _create(customer, lookup_only=False):
     c = _config(customer["city"])
     if not c:
         return None
+    customer = dict(customer, phone=normalized_phone(customer['phone']))
     base, email, api_key, branch, source = c
     auth = _post(f"{base}/v2api/auth/login", {"email": email, "api_key": api_key})
     token = auth.get("token")
     if not token:
         raise RuntimeError('AlfaCRM не вернула токен')
-    body = {"name": customer["name"], "phone": customer["phone"], "legal_type": 1, "is_study": 0,
+    body = {"name": customer["name"], "phone": [customer["phone"]], "legal_type": 1, "is_study": 0,
             "note": "Telegram Outreach (AI). Просьба подтвердить запись. "
                     f"Город: {customer['city']}; направление: {customer.get('course') or 'не выбрано'}; "
                     f"возраст: {customer.get('child_age') or 'не указан'}; "
@@ -49,7 +60,9 @@ def _create(customer):
     if source.isdigit():
         body["lead_source_id"] = int(source)
     # Prevent duplicate leads in AlfaCRM when a matching phone already exists.
-    digits = lambda x: ''.join(c for c in str(x) if c.isdigit())[-10:]
+    def digits(value):
+        try: return normalized_phone(value)
+        except ValueError: return None
     for page in range(100):
         found = _post(f"{base}/v2api/{branch}/customer/index",
                       {"phone": customer["phone"], "is_study": 2, "removed": 1, "page": page},
@@ -68,6 +81,8 @@ def _create(customer):
                 return int(existing_id)
     else:
         raise RuntimeError('AlfaCRM lookup pagination limit; creation blocked')
+    if lookup_only:
+        return None
     # In AlfaCRM each branch is routed through /{branch}/customer/create.
     result = _post(f"{base}/v2api/{branch}/customer/create", body, {"X-ALFACRM-TOKEN": token})
     if not result.get("success") or not result.get("model", {}).get("id"):
@@ -77,4 +92,20 @@ def _create(customer):
 
 async def create_lead(customer):
     """None means integration not configured; no fake success."""
+    from outgoing import safe_mode
+    if safe_mode():
+        return None
+    if not customer.get('crm_consent') or not customer.get('wants_trial') or customer.get('stopped'):
+        raise ValueError('Explicit active consent and request required')
+    if not str(customer.get('name') or '').strip():
+        raise ValueError('Name required')
     return await asyncio.to_thread(_create, customer)
+
+
+async def reconcile_lead(customer):
+    """Read-only recovery: never create again after an ambiguous write."""
+    from outgoing import safe_mode
+    if safe_mode(): return None
+    if not customer.get('crm_consent') or customer.get('stopped'):
+        raise ValueError('Active consent required')
+    return await asyncio.to_thread(_create, customer, True)

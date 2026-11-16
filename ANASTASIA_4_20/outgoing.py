@@ -1,29 +1,26 @@
-"""Conservative at-most-once effects. Ambiguous attempts require human review."""
-import asyncio
+"""Shared policy and durable at-most-once wrapper for application effects."""
 import os
-from telethon.errors import FloodWaitError, PeerFloodError
-
+from delivery import Ledger
 
 def safe_mode():
-    return os.getenv('SAFE_TEST_MODE', 'true').strip().lower() != 'false'
+    return os.getenv('SAFE_TEST_MODE','true').strip().lower() != 'false'
 
-
-async def send_once(store, key, uid, send, safe=safe_mode):
-    config = store.configuration().resolve(uid)['values']
-    if config['mode'] == 'paused' or not config['outbound_allowed']:
+async def send_once(store,key,uid,send,safe=safe_mode):
+    ledger=Ledger(store)
+    # Existing 4.20 effects are suppression records, including interrupted sends.
+    if store.db.execute('SELECT 1 FROM effects WHERE effect_key=?',(key,)).fetchone():
         return False
-    if safe() or store.outbound_blocked() or (store.get(uid) or {}).get('stopped'):
-        return False
-    if not store.claim_effect(key):
-        return False
+    kind=('initial' if key.startswith('greeting:') else 'campaign' if key.startswith('radar:')
+          else 'reminder' if key.startswith(('reminder:','booking:')) else 'reply')
+    ledger.prepare(key,uid,kind,'send_once')
+    ledger.validate(key);ledger.approve(key)
     try:
-        await send()
-    except (FloodWaitError, PeerFloodError) as exc:
-        store.block_outbound(type(exc).__name__)
-        store.finish_effect(key, 'uncertain')
+        sent=await ledger.deliver(key,send,safe=safe())
+    except BaseException:
+        with store.db:
+            store.db.execute('INSERT OR REPLACE INTO effects VALUES(?,?,?)',(key,'uncertain',__import__('storage').utc_now()))
         raise
-    except (Exception, asyncio.CancelledError):
-        store.finish_effect(key, 'uncertain')
-        raise
-    store.finish_effect(key, 'sent')
-    return True
+    if sent:
+        with store.db:
+            store.db.execute('INSERT OR REPLACE INTO effects VALUES(?,?,?)',(key,'sent',__import__('storage').utc_now()))
+    return sent

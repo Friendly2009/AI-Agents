@@ -2,6 +2,8 @@
 def remember_opening(store, manager, uid, text, username='', excluded=(), safe=False, bot=False):
     if safe or bot or uid in excluded or uid == 777000 or not text.strip() or text.lstrip().startswith('/'):
         return False
+    if store.db.execute('SELECT 1 FROM outbound_operations WHERE uid=? AND attempted IS NOT NULL AND simulated=0',(uid,)).fetchone():
+        return False  # Automated outgoing event is not a manual opening.
     contact = store.get(uid) or {}
     if contact.get('stopped') or manager.paused(uid) or store.history(uid):
         return False
@@ -9,6 +11,10 @@ def remember_opening(store, manager, uid, text, username='', excluded=(), safe=F
     store.add_turn(uid, 'assistant', text)
     store.update(uid, ai_notice_shown=1)
     store.mark_sent(uid, 'Ручное начало диалога')
+    from delivery import Ledger
+    ledger=Ledger(store)
+    with store.db:
+        ledger.event('conversation_started',str(uid),status='manual',source='account_operator')
     return True
 
 

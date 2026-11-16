@@ -165,9 +165,12 @@ class Configuration:
         return self.save(actor, scope, target, json.loads(row[0]), expected, 'rollback:' + str(revision))
 
     def resolve(self, uid=None, group=None):
-        # One read transaction gives a consistent global/group/client snapshot.
-        with self.db:
-            self.db.execute('BEGIN')
+        # Reuse the delivery reservation transaction without committing it.
+        from contextlib import nullcontext
+        nested = self.db.in_transaction
+        with nullcontext() if nested else self.db:
+            if not nested:
+                self.db.execute('BEGIN')
             client = self.read('client', str(uid)) if uid is not None else None
             if group is None and client and not client['deleted'] and client['enabled']:
                 group = client['group']

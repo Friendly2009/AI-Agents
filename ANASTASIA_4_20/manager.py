@@ -19,7 +19,15 @@ class Manager:
         CREATE UNIQUE INDEX IF NOT EXISTS one_booking ON bookings(uid,slot) WHERE status != 'cancelled';
         CREATE TABLE IF NOT EXISTS usage(id INTEGER PRIMARY KEY, model TEXT, input_tokens INTEGER, output_tokens INTEGER, cost REAL, at TEXT);
         ''')
+        cols={r[1] for r in self.db.execute('PRAGMA table_info(usage)')}
+        if 'mode' not in cols:
+            self.db.execute("ALTER TABLE usage ADD COLUMN mode TEXT NOT NULL DEFAULT 'legacy'")
+        self.db.execute("CREATE TABLE IF NOT EXISTS llm_calls(id INTEGER PRIMARY KEY,model TEXT,mode TEXT,at TEXT)")
         self.db.commit()
+    def llm_request(self,model):
+        with self.db:
+            self.db.execute('INSERT INTO llm_calls(model,mode,at) VALUES(?,?,?)',
+                            (model,'test' if safe_mode() else 'live',datetime.now(timezone.utc).isoformat()))
     def claim(self,uid,mid):
         with self.db:
             return self.db.execute('INSERT OR IGNORE INTO messages VALUES(?,?)',(uid,mid)).rowcount==1
@@ -50,10 +58,10 @@ class Manager:
         if not r:raise ValueError('Бронь не найдена')
         return dict(r)
     def set_booking(self,bid,status,uid=None):
-        if status not in {'pending','confirmed','cancelled','attended'}:
+        if status not in {'pending','confirmed','cancelled','attended','missed'}:
             raise ValueError('Недопустимый статус')
         b=self.booking(bid)
-        if status == 'attended' and b['status'] != 'confirmed':
+        if status in {'attended','missed'} and b['status'] != 'confirmed':
             raise ValueError('Сначала подтвердите занятие')
         if uid is not None and b['uid']!=uid:raise ValueError('Это не ваша бронь')
         if b['status']=='cancelled' and status!='cancelled':raise ValueError('Создайте новую бронь')
@@ -71,16 +79,30 @@ class Manager:
             self.db.execute('DELETE FROM handoffs WHERE uid=?',(uid,))
     def usage(self,model,inp,out):
         a=os.getenv('API_INPUT_USD_PER_MILLION','');b=os.getenv('API_OUTPUT_USD_PER_MILLION','')
-        cost=(inp*float(a)+out*float(b))/1e6 if a and b else None
-        with self.db:self.db.execute('INSERT INTO usage(model,input_tokens,output_tokens,cost,at) VALUES(?,?,?,?,?)',(model,inp,out,cost,datetime.now(timezone.utc).isoformat()))
+        if model != os.getenv('OPENAI_MODEL','gpt-5-mini'):
+            a=b=''
+        try:
+            prices=json.loads(os.getenv('API_PRICES_JSON','{}')).get(model)
+            if prices: a,b=prices['input'],prices['output']
+        except (ValueError,TypeError,KeyError,AttributeError):
+            a=b='' 
+        try:
+            import math
+            rates=(float(a),float(b))
+            cost=(inp*rates[0]+out*rates[1])/1e6 if all(math.isfinite(v) and v>=0 for v in rates) else None
+        except (TypeError,ValueError):
+            cost=None
+        with self.db:self.db.execute('INSERT INTO usage(model,input_tokens,output_tokens,cost,at,mode) VALUES(?,?,?,?,?,?)',(model,inp,out,cost,datetime.now(timezone.utc).isoformat(),'test' if safe_mode() else 'live'))
     def report(self,store):
-        n=store.db.execute('SELECT count(*) FROM contacts').fetchone()[0]
-        leads=store.db.execute('SELECT count(*) FROM contacts WHERE wants_trial=1').fetchone()[0]
-        crm=store.db.execute('SELECT count(*) FROM contacts WHERE crm_id IS NOT NULL').fetchone()[0]
-        bookings=self.db.execute("SELECT count(*) FROM bookings WHERE status='confirmed'").fetchone()[0]
-        u=self.db.execute('SELECT count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),sum(cost),sum(cost IS NULL) FROM usage').fetchone()
-        cost=f'${u[3]:.4f}' if u[0] and not u[4] else 'не рассчитано: заполните тарифы API'
-        return f'За всё время (включая тесты):\nКонтактов: {n}; заявок: {leads}; лидов CRM: {crm}; подтверждённых броней: {bookings}\nКонтакт → заявка: {leads/n*100 if n else 0:.1f}%\nGPT: {u[0]} вызовов; токены {u[1]} / {u[2]}; оценка стоимости: {cost}. Голосовой API в сумму не включён.'
+        from funnel import Funnel
+        u=self.db.execute("SELECT count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0),sum(cost),sum(cost IS NULL) FROM usage WHERE mode='live'").fetchone()
+        calls=self.db.execute("SELECT COUNT(*) FROM llm_calls WHERE mode='live'").fetchone()[0]
+        complete=bool(calls and calls==u[0] and not u[4])
+        cost=f'${u[3]:.4f}' if complete else 'не рассчитано: тарифы или полные usage недоступны'
+        n=Funnel(store).counts()['trial_attended']
+        per=f'${u[3]/n:.4f}' if complete and n else 'нет достоверных данных'
+        return (Funnel(store).report()+f'\nLLM: {calls} запросов, {u[0]} ответов с usage; токены вход/выход: {u[1]}/{u[2]}; стоимость: {cost}. '
+                f'API на подтверждённое посещение: {per}. Учтены текстовые запросы консультаций, приглашений и распоряжений; голосовой API и другие расходы исключены.')
 
 M=Manager()
 
@@ -92,12 +114,57 @@ async def commands(client,event,store,admin=False):
     text=(event.raw_text or '').strip();uid=event.sender_id
     if not text.startswith('/'):return False
     command,*rest=text.split(maxsplit=1); arg=rest[0] if rest else ''
-    admin_cmds={'/отчёт','/слот','/изменить_слот','/закрыть_слот','/подтвердить_бронь','/посещение','/отменить_бронь','/вернуть_ии','/брони','/менеджер_помощь'}
+    admin_cmds={'/воронка','/результат','/оценка','/crm_сверка','/пропуск','/отчёт','/слот','/изменить_слот','/закрыть_слот','/подтвердить_бронь','/посещение','/отменить_бронь','/вернуть_ии','/брони','/менеджер_помощь'}
     if command in admin_cmds and not admin:return False
     try:
         if command=='/менеджер_помощь':
-            answer='/слот Город | Курс | 2026-12-01T15:00:00+03:00 | 8\n/расписание\n/закрыть_слот ID\n/брони\n/подтвердить_бронь ID\n/отменить_бронь ID\n/вернуть_ии TelegramID\n/отчёт\nКлиенту: /бронь ID_слота, /отмена ID_брони, /напомнить ID_брони'
-        elif command=='/отчёт':answer=M.report(store)
+            answer='/воронка · /результат TelegramID trial_attended ID_занятия · /crm_сверка TelegramID · /оценка ID_ответа 1–5 · /пропуск ID_брони\n/слот Город | Курс | 2026-12-01T15:00:00+03:00 | 8\n/расписание\n/закрыть_слот ID\n/брони\n/подтвердить_бронь ID\n/отменить_бронь ID\n/вернуть_ии TelegramID\n/отчёт\nКлиенту: /бронь ID_слота, /отмена ID_брони, /напомнить ID_брони'
+        elif command in {'/отчёт','/воронка'}:
+            from agent_config import require_admin
+            require_admin(uid)
+            answer=M.report(store)
+        elif command=='/результат':
+            from funnel import Funnel
+            from agent_config import require_admin
+            require_admin(uid)
+            if safe_mode():
+                answer='SAFE TEST: рабочие результаты не изменены.'
+            else:
+                target,outcome,reference=arg.split(maxsplit=2)
+                Funnel(store).confirm(int(target),outcome,uid,reference)
+                if outcome in {'trial_attended','trial_missed'}:
+                    from sales_learning import LEARNING
+                    LEARNING.mark_user(int(target),'attended' if outcome=='trial_attended' else 'missed',uid)
+                answer='Результат подтверждён сотрудником; источник и ID подтверждения сохранены.'
+        elif command=='/оценка':
+            from agent_config import require_admin
+            from funnel import Funnel
+            require_admin(uid)
+            interaction,score=map(int,arg.split())
+            from sales_learning import LEARNING
+            if not 1<=score<=5 or not LEARNING.db.execute('SELECT 1 FROM interactions WHERE id=?',(interaction,)).fetchone():
+                raise ValueError('Нужны ID ответа и оценка 1–5')
+            with store.db:
+                store.db.execute('CREATE TABLE IF NOT EXISTS response_reviews(interaction INTEGER,actor INTEGER,score INTEGER,PRIMARY KEY(interaction,actor))')
+                if not safe_mode():
+                    store.db.execute('INSERT INTO response_reviews VALUES(?,?,?) ON CONFLICT(interaction,actor) DO UPDATE SET score=excluded.score',(interaction,uid,score))
+            answer='Оценка сохранена.' if not safe_mode() else 'SAFE TEST: оценка не сохранена.'
+        elif command=='/crm_сверка':
+            from agent_config import require_admin
+            require_admin(uid)
+            from crm import reconcile_lead
+            target=int(arg); contact=store.get(target)
+            if not contact: raise ValueError('Клиент не найден')
+            result=await reconcile_lead(contact)
+            if result:
+                from funnel import Funnel
+                with store.db:
+                    store.db.execute('UPDATE contacts SET crm_id=?,submission_pending=0 WHERE user_id=?',(result,target))
+                    Funnel(store).emit(target,'lead_created',reliability='crm',confirmation='alfacrm_reconciliation',external_id=result)
+                store.set_dialogue(target,application_status='submitted')
+                answer='Карточка найдена и связана локально. Повторное создание и уведомления не выполнялись.'
+            else:
+                answer='Карточка не найдена или SAFE TEST. Новая карточка не создавалась; требуется ручная проверка.'
         elif command=='/слот':
             city,course,starts,cap=[s.strip() for s in arg.split('|')]
             answer=f'Слот #{M.add_slot(city,course,starts,int(cap))} создан в локальном расписании.'
@@ -126,28 +193,38 @@ async def commands(client,event,store,admin=False):
             contact=store.get(uid) or {}
             if not contact.get('crm_consent'):answer='Для сохранения брони напишите /согласие_на_запись, затем повторите /бронь. Это согласие на обработку данных для записи и передачу заявки в CRM Soft Skills.'
             else:
+                from funnel import Funnel
+                with store.db:
+                    Funnel(store).emit(uid,'trial_requested',reliability='intent',confirmation='booking_command')
                 bid=M.book(uid,int(arg)); b=M.booking(bid); store.update(uid,wants_trial=1,city=b['city'],course=b['course'],wanted_time=b['starts'])
                 answer=f'Предварительная бронь #{bid}. Место в локальном расписании зарезервировано, менеджер подтвердит запись. Напоминание по желанию: /напомнить {bid}. Отмена: /отмена {bid}.'
                 for aid in __import__('director_orders').admin_ids(0):
+                    if safe_mode(): continue
                     try:await client.send_message(aid,f'Новая бронь #{bid}, клиент ID {uid}. /брони')
                     except Exception:pass
         elif command=='/согласие_на_запись':
             store.ensure(uid);store.update(uid,crm_consent=1);answer='Согласие на обработку данных для записи и передачу заявки в CRM Soft Skills сохранено.'
         elif command=='/отмена':M.set_booking(int(arg),'cancelled',uid);answer='Бронь отменена, место освобождено.'
         elif command=='/напомнить':M.remind(int(arg),uid);answer='Отправим одно напоминание в течение суток перед подтверждённым занятием. Отмена уведомлений: /стоп.'
-        elif command in {'/подтвердить_бронь','/отменить_бронь','/посещение'}:
-            status={'/подтвердить_бронь':'confirmed','/отменить_бронь':'cancelled','/посещение':'attended'}[command]
+        elif command in {'/подтвердить_бронь','/отменить_бронь','/посещение','/пропуск'}:
+            status={'/подтвердить_бронь':'confirmed','/отменить_бронь':'cancelled','/посещение':'attended','/пропуск':'missed'}[command]
             if safe_mode():
                 await event.reply('SAFE TEST: изменение реальной брони и уведомление отключены.')
                 return True
+            from agent_config import require_admin
+            require_admin(uid)
             M.set_booking(int(arg),status);b=M.booking(int(arg))
+            from funnel import Funnel
             store.ensure(b['uid'])
-            store.set_dialogue(b['uid'], stage={'confirmed':'visit_confirmed','cancelled':'declined','attended':'attended'}[status], application_status=status)
-            if status == 'attended':
+            if status in {'confirmed','attended','missed'}:
+                Funnel(store).confirm(b['uid'],{'confirmed':'trial_confirmed','attended':'trial_attended','missed':'trial_missed'}[status],uid,'booking:'+str(b['id']))
+            store.ensure(b['uid'])
+            store.set_dialogue(b['uid'], stage={'confirmed':'visit_confirmed','cancelled':'declined','attended':'attended','missed':'declined'}[status], application_status=status)
+            if status in {'attended','missed'}:
                 from sales_learning import LEARNING
-                LEARNING.mark_user(b['uid'], 'attended')
+                LEARNING.mark_user(b['uid'], status, uid)
             await send_once(store, f"booking:{b['id']}:{status}", b['uid'],
-                lambda: client.send_message(b['uid'],f"Бронь #{arg}: { {'confirmed':'подтверждена менеджером','cancelled':'отменена менеджером','attended':'посещение подтверждено сотрудником'}[status] }. {b['course']}",parse_mode=None))
+                lambda: client.send_message(b['uid'],f"Бронь #{arg}: { {'confirmed':'подтверждена менеджером','cancelled':'отменена менеджером','attended':'посещение подтверждено сотрудником','missed':'пропуск подтверждён сотрудником'}[status] }. {b['course']}",parse_mode=None))
             answer='Статус обновлён локально. Это не запись занятия в AlfaCRM.'
         elif command=='/брони':answer='\n'.join(str(dict(r)) for r in M.db.execute('SELECT * FROM bookings ORDER BY id DESC LIMIT 25')) or 'Броней нет'
         elif command=='/вернуть_ии':
@@ -156,5 +233,5 @@ async def commands(client,event,store,admin=False):
             answer='Автоответы для этого клиента возобновлены.'
         else:return False
         await event.reply(answer[:3900]);return True
-    except (ValueError,TypeError):
+    except (ValueError,TypeError,PermissionError):
         await event.reply('Проверьте параметры команды. Для руководителя: /менеджер_помощь');return True

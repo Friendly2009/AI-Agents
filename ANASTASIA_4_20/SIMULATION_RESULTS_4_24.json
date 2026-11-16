@@ -1,0 +1,209 @@
+[
+  {
+    "args": [],
+    "simulated_requests": 3,
+    "external_deliveries": 0,
+    "states": [
+      {
+        "id": "1",
+        "state": "sent",
+        "error": ""
+      },
+      {
+        "id": "2",
+        "state": "sent",
+        "error": ""
+      },
+      {
+        "id": "3",
+        "state": "sent",
+        "error": ""
+      },
+      {
+        "id": "4",
+        "state": "blocked_by_policy",
+        "error": "daily_business_limit"
+      },
+      {
+        "id": "5",
+        "state": "blocked_by_policy",
+        "error": "daily_business_limit"
+      }
+    ]
+  },
+  {
+    "args": [
+      "--limit",
+      "5"
+    ],
+    "simulated_requests": 5,
+    "external_deliveries": 0,
+    "states": [
+      {
+        "id": "1",
+        "state": "sent",
+        "error": ""
+      },
+      {
+        "id": "2",
+        "state": "sent",
+        "error": ""
+      },
+      {
+        "id": "3",
+        "state": "sent",
+        "error": ""
+      },
+      {
+        "id": "4",
+        "state": "sent",
+        "error": ""
+      },
+      {
+        "id": "5",
+        "state": "sent",
+        "error": ""
+      }
+    ]
+  },
+  {
+    "args": [
+      "--error",
+      "timeout"
+    ],
+    "simulated_requests": 1,
+    "external_deliveries": 0,
+    "states": [
+      {
+        "id": "1",
+        "state": "uncertain",
+        "error": "TimeoutError"
+      },
+      {
+        "id": "2",
+        "state": "approved",
+        "error": ""
+      },
+      {
+        "id": "3",
+        "state": "approved",
+        "error": ""
+      },
+      {
+        "id": "4",
+        "state": "approved",
+        "error": ""
+      },
+      {
+        "id": "5",
+        "state": "approved",
+        "error": ""
+      }
+    ]
+  },
+  {
+    "args": [
+      "--error",
+      "disconnect"
+    ],
+    "simulated_requests": 1,
+    "external_deliveries": 0,
+    "states": [
+      {
+        "id": "1",
+        "state": "uncertain",
+        "error": "ConnectionError"
+      },
+      {
+        "id": "2",
+        "state": "approved",
+        "error": ""
+      },
+      {
+        "id": "3",
+        "state": "approved",
+        "error": ""
+      },
+      {
+        "id": "4",
+        "state": "approved",
+        "error": ""
+      },
+      {
+        "id": "5",
+        "state": "approved",
+        "error": ""
+      }
+    ]
+  },
+  {
+    "args": [
+      "--error",
+      "peerflood"
+    ],
+    "simulated_requests": 1,
+    "external_deliveries": 0,
+    "states": [
+      {
+        "id": "1",
+        "state": "failed",
+        "error": "PeerFloodError"
+      },
+      {
+        "id": "2",
+        "state": "approved",
+        "error": ""
+      },
+      {
+        "id": "3",
+        "state": "approved",
+        "error": ""
+      },
+      {
+        "id": "4",
+        "state": "approved",
+        "error": ""
+      },
+      {
+        "id": "5",
+        "state": "approved",
+        "error": ""
+      }
+    ]
+  },
+  {
+    "args": [
+      "--error",
+      "floodwait"
+    ],
+    "simulated_requests": 1,
+    "external_deliveries": 0,
+    "states": [
+      {
+        "id": "1",
+        "state": "failed",
+        "error": "FloodWaitError"
+      },
+      {
+        "id": "2",
+        "state": "approved",
+        "error": ""
+      },
+      {
+        "id": "3",
+        "state": "approved",
+        "error": ""
+      },
+      {
+        "id": "4",
+        "state": "approved",
+        "error": ""
+      },
+      {
+        "id": "5",
+        "state": "approved",
+        "error": ""
+      }
+    ]
+  }
+]

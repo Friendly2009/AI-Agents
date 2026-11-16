@@ -15,7 +15,8 @@ import os
 from pathlib import Path
 import re
 from dotenv import load_dotenv
-from telethon import TelegramClient, events, functions, types
+from telethon import events, functions, types
+from delivery import GuardedTelegramClient as TelegramClient, Ledger
 from telethon.errors import FloodWaitError, RPCError
 
 from brain import respond
@@ -62,6 +63,7 @@ TEST_SESSIONS = {}
 
 def reset_test(user_id):
     TEST_SESSIONS[user_id] = (Store(":memory:"), Manager(":memory:"))
+    TEST_SESSIONS[user_id][0].analytics_test = True
     TESTERS.add(user_id)
 
 def is_greeting(text):
@@ -206,7 +208,10 @@ async def maybe_crm(client, user_id):
     elif os.getenv('CRM_ENABLED','false').lower() == 'true':
         from crm import _config
         import hashlib
-        crm_key = "crm:" + hashlib.sha256((contact["city"] + ":" + contact["phone"]).encode()).hexdigest()
+        crm_key = "crm:" + hashlib.sha256((contact["city"] + ":" + __import__("crm").normalized_phone(contact["phone"])).encode()).hexdigest()
+        legacy_key = "crm:" + hashlib.sha256((contact["city"] + ":" + contact["phone"]).encode()).hexdigest()
+        if legacy_key != crm_key and STORE.db.execute('SELECT 1 FROM effects WHERE effect_key=?',(legacy_key,)).fetchone():
+            return  # Preserve pre-migration suppression; recover through read-only reconciliation.
         try:
             configured = _config(contact['city'])
         except ValueError:
@@ -225,6 +230,8 @@ async def maybe_crm(client, user_id):
             except (Exception, asyncio.CancelledError) as exc:
                 STORE.finish_effect(crm_key, 'uncertain')
                 STORE.set_dialogue(user_id, application_status='uncertain')
+                from funnel import Funnel
+                Funnel(STORE).metric('crm_error')
                 LOG.error('AlfaCRM: %s; результат требует сверки', type(exc).__name__)
                 if isinstance(exc, asyncio.CancelledError):
                     raise
@@ -263,6 +270,7 @@ async def _handle_dm(client, event):
         return
     lock = CHAT_LOCKS.setdefault(user_id, asyncio.Lock())
     async with lock:
+        STORE.ensure(user_id, username=getattr(sender, 'username', '') or '', source='Входящий Telegram')
         if not STORE.claim_inbound(user_id, event.id, text):
             return
         STORE.ensure(user_id, username=getattr(sender, 'username', '') or '', source='Входящий Telegram')
@@ -291,6 +299,9 @@ async def _handle_dm(client, event):
                 RADAR.stop(user_id)
                 LEARNING.mark_user(user_id, 'lost')
             STORE.erase(user_id)
+            from funnel import Funnel
+            with STORE.db:
+                Funnel(STORE).emit(user_id,'client_declined',reliability='intent',confirmation='explicit_stop',details={'reason':'refusal'})
             STORE.set_dialogue(user_id, stage='declined', declined=True)
             M.erase(user_id)
             await event.reply('Общение и приглашения остановлены. Удалить регистрационные данные: /удалить.')
@@ -348,7 +359,7 @@ async def _handle_dm(client, event):
             await event.reply(reply)
             STORE.add_turn(user_id, 'assistant', reply)
             return
-        if not testing:
+        if not testing and not safe_test_mode():
             LEARNING.mark_engaged(user_id, text)
         if not contact.get('ai_consent'):
             prior = STORE.history(user_id)
@@ -427,16 +438,19 @@ async def _handle_dm(client, event):
             STORE.update(user_id, speech_preferences=json.dumps(preferences, ensure_ascii=False))
             contact = STORE.get(user_id)
         STORE.add_turn(user_id, 'user', text)
+        response_started = __import__('time').monotonic()
         # Recording consent is accepted only as an answer to the explicit recording question.
         try:
             # Telegram shows a genuine typing indicator while GPT prepares the response.
             async with client.action(event.chat_id, 'typing'):
                 history_for_ai = STORE.history(user_id, limit=30)
                 learning_bucket = LEARNING.bucket(text, contact)
-                learning_selection = (learning_bucket, LEARNING.choose(learning_bucket))
+                learning_selection = (learning_bucket, LEARNING.choose(learning_bucket, contact.get('source') or 'unknown'))
                 learning_note = LEARNING.prompt_hint(text, contact, history_for_ai, selection=learning_selection) if not testing else ''
                 parsed = await asyncio.wait_for(respond(history_for_ai, campaign=load_active(), learning_note=learning_note, manager=M, client_context=known_context(contact, dialogue), configuration=globals()['STORE'].configuration().resolve(user_id)),timeout=45)
         except Exception as exc:
+            from funnel import Funnel
+            Funnel(STORE).metric('llm_error')
             LOG.error('Ошибка API GPT: %s', type(exc).__name__)
             if not testing and STORE.configuration().resolve(user_id)['values']['mode'] == 'paused':
                 return
@@ -469,8 +483,10 @@ async def _handle_dm(client, event):
         if should_ask_recording(contact, current, parsed, STORE.history(user_id, limit=30)):
             reply = RECORDING_QUESTION
         await client.send_message(event.chat_id, reply)
+        from funnel import Funnel
+        Funnel(STORE).metric('response_seconds', __import__('time').monotonic()-response_started)
         STORE.add_turn(user_id, 'assistant', reply)
-        if not testing:
+        if not testing and not safe_test_mode():
             if parsed.get('trial_decision') == 'yes':
                 LEARNING.mark_user(user_id, 'trial_interest')
             elif parsed.get('trial_decision') == 'no':
@@ -593,6 +609,13 @@ async def listen(client):
                 await event.reply('Формат: /обучение успех ID')
                 return
             label = {'успех': 'lead', 'посещение': 'attended', 'провал': 'lost'}[parts[1].lower()]
+            if safe_test_mode():
+                await event.reply('SAFE TEST: разметка рабочих результатов отключена.')
+                return
+            row = LEARNING.db.execute('SELECT user_id FROM interactions WHERE id=?',(int(parts[2]),)).fetchone()
+            if row and label == 'attended':
+                from funnel import Funnel
+                Funnel(STORE).confirm(row[0],'trial_attended',event.sender_id,'learning:'+parts[2])
             ok = LEARNING.mark(int(parts[2]), label, event.sender_id)
             await event.reply('Исход сохранён. Менеджер учтёт его в сравнении сценариев.' if ok else 'Такой ID обучения не найден.')
             return
@@ -863,10 +886,13 @@ async def listen(client):
                     contact=STORE.get(b['uid']) or {}
                     if contact.get('stopped') or safe_test_mode() or STORE.outbound_blocked(): continue
                     # Mark before send: ambiguous delivery never triggers duplicate automatic reminders.
-                    with M.db: M.db.execute('UPDATE bookings SET sent=1 WHERE id=?',(b['id'],))
                     try:
-                        await send_once(STORE, f"reminder:{b['id']}", b['uid'],
+                        confirmed = await send_once(STORE, f"reminder:{b['id']}", b['uid'],
                             lambda: client.send_message(b['uid'],f"Напоминаем: {b['course']}, {b['starts']} (UTC). Бронь #{b['id']}. Отмена: /отмена {b['id']}",parse_mode=None))
+                        if confirmed:
+                            with M.db: M.db.execute('UPDATE bookings SET sent=1 WHERE id=?',(b['id'],))
+                        else:
+                            await notice_owner(client, f"Напоминание #{b['id']} заблокировано; см. outbound_operations.")
                     except Exception:
                         await notice_owner(client,f"Не удалось доставить напоминание по брони #{b['id']}. Проверьте вручную.")
             await asyncio.sleep(60)
@@ -891,54 +917,8 @@ async def send_optins(client):
 
 
 async def send_radar(client):
-    """Campaign follow-ups ONLY to consenting adults who initiated contact."""
-    if safe_test_mode() or STORE.outbound_blocked():
-        return
-    if os.getenv('FAMILY_RADAR_OUTREACH_ENABLED','false').lower() != 'true':
-        print('FAMILY_RADAR_OUTREACH_ENABLED=false: рассылка отключена')
-        return
-    campaign = load_active()
-    if campaign.get('paused',True):
-        print('Кампания на паузе. В Избранном: /показать, /возобновить')
-        return
-    dry_run = os.getenv('DRY_RUN','true').lower() == 'true'
-    daily_limit = max(1,min(int(os.getenv('DAILY_LIMIT','10')),20))
-    interval = max(60,int(os.getenv('SEND_INTERVAL_SECONDS','120')))
-    for rec in RADAR.candidates():
-        if safe_test_mode() or STORE.outbound_blocked():
-            break
-        if STORE.sent_today() + RADAR.sent_today() >= daily_limit:
-            print('Достигнут суточный лимит отправок')
-            return
-        ok, why = RADAR.can_send(rec,campaign)
-        if not ok:
-            print(f'Пропущен Telegram ID {rec["user_id"]}: {why}')
-            continue
-        if (STORE.get(rec['user_id']) or {}).get('stopped'):
-            print(f'Пропуск {rec["user_id"]}: отказ от общения')
-            continue
-        # Names from profile are optional; skip ambiguous/non-word profile names.
-        first = (rec.get('first_name') or '').strip()
-        if not re.fullmatch(r'[А-Яа-яЁёA-Za-z-]{2,30}', first):
-            first = ''
-        message = compose_first_message(first, campaign)
-        if dry_run:
-            print(f'[БЕЗ ОТПРАВКИ] ID {rec["user_id"]}: {message}')
-            continue
-        try:
-            # Reserve campaign/cooldown before the network; never retry uncertain delivery.
-            RADAR.mark_sent(rec['user_id'],campaign)
-            if not await send_once(STORE, f'radar:{rec["user_id"]}:{campaign_key(campaign)}',
-                    rec['user_id'], lambda: client.send_message(rec['user_id'],message,parse_mode=None)):
-                continue
-            print(f'Приглашение отправлено существующему подписчику {rec["user_id"]}')
-            await asyncio.sleep(interval)
-        except FloodWaitError as e:
-            print(f'Ограничение Telegram: остановка отправки на {e.seconds} секунд')
-            break
-        except Exception as ex:
-            print(f'Отправки остановлены: {type(ex).__name__}; результат требует проверки')
-            break
+    """Unattended campaign sending is disabled: each list needs approval."""
+    print('Для кампании: /кампания_список, проверка адресатов, /отправить. Автоматическая отправка отключена.')
 
 
 async def discover(client):
@@ -1003,11 +983,14 @@ async def main():
         process_lock.execute('BEGIN EXCLUSIVE')
     except sqlite3.OperationalError:
         raise SystemExit('Анастасия уже запущена из этой папки. Закройте первое окно.')
+    Ledger(STORE).recover()
     aid, ahash = settings()
     client = TelegramClient(str(session_path()), aid, ahash, flood_sleep_threshold=0,
-                            request_retries=0, raise_last_call_error=True)
+                            request_retries=0, auto_reconnect=False, raise_last_call_error=True)
+    client.configure_delivery(STORE, director_admin_ids(0), M)
     try:
         await client.start(phone=os.getenv('TG_PHONE', '').strip() or None)
+        client.configure_delivery(STORE, director_admin_ids(0) | {(await client.get_me()).id}, M)
         if args.mode == 'listen':
             await listen(client)
         elif args.mode == 'send-optins':

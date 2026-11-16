@@ -66,6 +66,10 @@ class Store:
 
         from agent_config import Configuration
         Configuration.migrate(self.db)
+        from delivery import Ledger
+        Ledger(self)
+        from funnel import Funnel
+        Funnel.migrate(self.db)
 
     def configuration(self):
         from agent_config import Configuration
@@ -88,6 +92,11 @@ class Store:
                  "wants_trial", "crm_id", "pending_notified", "consultation_notes", "speech_preferences"}
         if not set(fields) <= valid:
             raise ValueError("Forbidden contact fields")
+        from funnel import Funnel
+        before = self.get(user_id) or {}
+        for field, event in [('ai_consent','contact_authorized'),('stopped','client_declined')]:
+            if fields.get(field) and not before.get(field):
+                Funnel(self).emit(user_id,event,confirmation='explicit_client_action')
         fields["updated_at"] = utc_now()
         sets = ", ".join(f"{key}=?" for key in fields)
         self.db.execute(f"UPDATE contacts SET {sets} WHERE user_id=?", (*fields.values(), user_id))
@@ -128,7 +137,18 @@ class Store:
             inserted = self.db.execute('INSERT OR IGNORE INTO inbox(user_id,message_id,content,created_at) VALUES(?,?,?,?)',
                                        (user_id, message_id, text, utc_now())).rowcount
         if inserted:
+            from funnel import Funnel
+            with self.db:
+                f=Funnel(self)
+                f.emit(user_id,'conversation_started',confirmation='telegram_inbound')
+                previous=self.db.execute('SELECT 1 FROM turns WHERE user_id=? AND role=? LIMIT 1',(user_id,'assistant')).fetchone()
+                if previous:
+                    f.emit(user_id,'client_replied',confirmation='telegram_inbound')
             self._inbound[user_id] = message_id
+        if inserted:
+            from delivery import Ledger
+            with self.db:
+                Ledger(self).event('conversation_resumed', str(user_id), status='inbound', source='telegram')
         return bool(inserted)
 
     def observe(self, user_id, text):
@@ -141,6 +161,17 @@ class Store:
                 self.db.execute('UPDATE contacts SET ' + ','.join(k+'=?' for k in fields) + ' WHERE user_id=?',
                                 (*fields.values(), user_id))
             self._save_dialogue(user_id, state)
+            from funnel import Funnel
+            from objections import classify
+            f = Funnel(self)
+            contact = self.get(user_id) or {}
+            if contact.get('name') and contact.get('city') and contact.get('child_age'):
+                f.emit(user_id,'qualified',reliability='intent',confirmation='user_text_rules')
+            if contact.get('wants_trial'):
+                f.emit(user_id,'trial_interested',reliability='intent',confirmation='user_text_rules')
+            if state.get('declined'):
+                f.emit(user_id,'client_declined',reliability='intent',confirmation='user_text_rules',
+                       details={'reason': classify(text) or 'unspecified'})
         return state
 
     def pending_inbound(self):
@@ -154,6 +185,9 @@ class Store:
 
     def recording_consent(self, user_id, decision):
         with self.db:
+            if decision:
+                from funnel import Funnel
+                Funnel(self).emit(user_id,'trial_requested',reliability='intent',confirmation='explicit_recording_consent')
             self.db.execute('UPDATE contacts SET crm_consent=?,submission_pending=?,updated_at=? WHERE user_id=?',
                             (int(decision), int(decision), utc_now(), user_id))
             state = self.dialogue(user_id)
@@ -163,6 +197,8 @@ class Store:
 
     def submitted(self, user_id, crm_id, effect_key):
         with self.db:
+            from funnel import Funnel
+            Funnel(self).emit(user_id,'lead_created',reliability='crm',confirmation='alfacrm_customer',external_id=crm_id)
             self.db.execute('UPDATE contacts SET crm_id=?,submission_pending=0,updated_at=? WHERE user_id=?',
                             (crm_id, utc_now(), user_id))
             self.db.execute("UPDATE effects SET state='sent',updated_at=? WHERE effect_key=?", (utc_now(), effect_key))
@@ -188,6 +224,9 @@ class Store:
 
     def erase(self, user_id: int):
         self.ensure(user_id)
+        self.db.execute('DELETE FROM funnel_events WHERE client_id=?',(user_id,))
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='lead_notices'").fetchone():
+            self.db.execute('DELETE FROM lead_notices WHERE uid=?',(user_id,))
         self.db.execute("DELETE FROM agent_config WHERE scope='client' AND target=?", (str(user_id),))
         self.db.execute("DELETE FROM agent_config_history WHERE scope='client' AND target=?", (str(user_id),))
         self.db.execute("UPDATE panel_audit SET target='[deleted]' WHERE target IN (?,?)", (str(user_id), 'client:' + str(user_id)))
@@ -197,6 +236,9 @@ class Store:
         # Retain minimal suppression record to prevent unwanted re-contact.
         self.db.execute("UPDATE contacts SET speech_preferences=NULL,consultation_notes=NULL,username=NULL,city=NULL,source=NULL,ai_consent=0,crm_consent=0,stopped=1,submission_pending=0,name=NULL,phone=NULL,course=NULL,child_age=NULL,wanted_time=NULL,wants_trial=0,pending_notified=0,updated_at=? WHERE user_id=?",
                         (utc_now(), user_id))
+        self.db.execute("UPDATE outbound_operations SET body='',state=CASE WHEN state IN ('draft','validated','approved') THEN 'blocked_by_policy' ELSE state END,error=CASE WHEN state IN ('draft','validated','approved') THEN 'recipient_declined' ELSE error END WHERE uid=?",(user_id,))
+        self.db.execute("UPDATE contact_permission SET source='[revoked]',status='revoked',declined_at=? WHERE uid=?",(utc_now(),user_id))
+        self.db.execute("INSERT INTO outbound_events(utc,event,operation,kind,status,error,source) VALUES(?,?,?,?,?,?,?)",(utc_now(),'recipient_declined',str(user_id),'conversation','declined','','recipient'))
         self.db.commit()
 
     def purge_old_turns(self, days: int = 30):

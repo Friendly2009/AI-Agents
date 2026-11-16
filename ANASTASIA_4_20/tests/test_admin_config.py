@@ -130,7 +130,7 @@ def test_selected_model_and_behavior_reach_llm(store):
     data = dict.fromkeys(SCHEMA['required']); data.update(reply='Hello', wants_trial=False, handoff=False, next_action='answer')
     client = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(return_value=SimpleNamespace(status='completed', usage=None, output_text=json.dumps(data)))), close=AsyncMock())
     with patch.dict('os.environ', {'OPENAI_API_KEY': 'secret-not-for-html'}), patch('brain.AsyncOpenAI', return_value=client):
-        asyncio.run(respond([{'role': 'user', 'content': 'Hello'}], manager=SimpleNamespace(slots=lambda: []), configuration=store.configuration().resolve()))
+        asyncio.run(respond([{'role': 'user', 'content': 'Hello'}], manager=SimpleNamespace(slots=lambda: [],llm_request=lambda *a:None), configuration=store.configuration().resolve()))
     args = client.responses.create.call_args.kwargs
     assert args['model'] == 'test-model'
     assert 'Consultant' in args['instructions'] and '"response_language": "en"' in args['instructions']

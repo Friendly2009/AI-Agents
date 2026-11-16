@@ -30,6 +30,8 @@ def coaching_context(history):
     recent = [t.get('content','') for t in history if t.get('role')=='assistant'][-3:]
     if any(INVITE.search(t) for t in recent):
         guide += ' Недавно уже было приглашение: не повторяй его на вопрос или сомнение. При согласии переходи к недостающим данным, при вопросе ответь по существу.'
+    from objections import guidance
+    guide += guidance(latest)
     return 'Подсказка по текущему ходу (это эвристика, учитывай полный контекст): ' + guide
 
 def guard_sales_action(parsed, text):

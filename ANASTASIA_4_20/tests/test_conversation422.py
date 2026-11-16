@@ -78,7 +78,7 @@ def test_wire_payload_preserves_schema():
     data.update(reply='Ответ',wants_trial=False,handoff=False,next_action='answer')
     response=SimpleNamespace(status='completed',usage=None,output_text=json.dumps(data))
     client=SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(return_value=response)),close=AsyncMock())
-    manager=SimpleNamespace(slots=lambda:[],usage=lambda *a:None)
+    manager=SimpleNamespace(slots=lambda:[],usage=lambda *a:None,llm_request=lambda *a:None)
     with patch.dict('os.environ',{'OPENAI_API_KEY':'offline-placeholder'}),patch('brain.AsyncOpenAI',return_value=client):
         result=asyncio.run(respond([{'role':'user','content':'Что такое цикл?'}],manager=manager,client_context={'child_age':10},settings=BehaviorSettings(emoji_frequency='off')))
     kwargs=client.responses.create.call_args.kwargs

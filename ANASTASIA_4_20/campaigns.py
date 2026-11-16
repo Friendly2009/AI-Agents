@@ -109,6 +109,8 @@ async def draft_from_owner_idea(brief: str) -> dict:
         raise ValueError('Описание идеи должно содержать от 15 до 2400 символов.')
     from openai import AsyncOpenAI
     client = AsyncOpenAI(api_key=os.environ['OPENAI_API_KEY'], timeout=30)
+    from manager import M
+    M.llm_request(os.getenv('OPENAI_MODEL', 'gpt-5-mini'))
     resp = await client.responses.create(
         model=os.getenv('OPENAI_MODEL', 'gpt-5-mini'),
         instructions=(
@@ -126,6 +128,8 @@ async def draft_from_owner_idea(brief: str) -> dict:
         text={'format': {'type': 'json_schema', 'name': 'outreach_campaign', 'strict': True,
                          'schema': CAMPAIGN_SCHEMA}},
     )
+    if getattr(resp,'usage',None):
+        M.usage(os.getenv('OPENAI_MODEL', 'gpt-5-mini'),resp.usage.input_tokens,resp.usage.output_tokens)
     parsed = json.loads(resp.output_text.strip())
     campaign = clean_campaign(parsed)
     save_draft(campaign)

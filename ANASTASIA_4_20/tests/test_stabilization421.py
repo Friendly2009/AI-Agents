@@ -32,7 +32,7 @@ def event(uid=42, text='вопрос', mid=1):
 
 class EffectsTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.s=Store(':memory:');self.s.ensure(42)
+        self.s=Store(':memory:');self.s.ensure(42);self.s.claim_inbound(42,1,'вопрос')
 
     async def test_parallel_attempts_send_once(self):
         send=AsyncMock()
@@ -63,7 +63,7 @@ class EffectsTests(unittest.IsolatedAsyncioTestCase):
     async def test_restrictions_persist_across_restart(self):
         for error in (PeerFloodError(None), FloodWaitError(None, capture=12)):
             with TemporaryDirectory() as d:
-                path=str(Path(d)/'db');s=Store(path)
+                path=str(Path(d)/'db');s=Store(path);s.claim_inbound(42,1,'вопрос')
                 with self.assertRaises(type(error)):
                     await send_once(s,'first',42,AsyncMock(side_effect=error),lambda:False)
                 s.db.close();s=Store(path);send=AsyncMock()
@@ -106,7 +106,13 @@ class InvitationTests(unittest.IsolatedAsyncioTestCase):
     async def test_peerflood_stops_batch_and_next_run(self):
         s=Store(':memory:');client=SimpleNamespace(send_message=AsyncMock(side_effect=PeerFloodError(None)))
         q=Invitations(client,s,lambda:False,consent=lambda uid:True)
-        batch=[(SimpleNamespace(id=i),'hi','parent') for i in (42,43)]
+        from delivery import Ledger
+        from datetime import date
+        ledger=Ledger(s);batch=[]
+        for i in (42,43):
+            ledger.grant(i,'test evidence',date.today().isoformat())
+            key=str(i);ledger.prepare(key,i,'initial','test','hi','test-batch')
+            ledger.validate(key);ledger.approve(key);batch.append(ledger.row(key))
         await q.run(event(),batch);await q.run(event(),batch)
         self.assertEqual(client.send_message.await_count,1)
         self.assertTrue(s.outbound_blocked())
@@ -174,15 +180,15 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             await main.send_radar(client)
         client.send_message.assert_not_called()
 
-    async def test_radar_timeout_reserves_and_stops(self):
+    async def test_radar_requires_explicit_list_approval(self):
         self.r.import_optin(dict(user_id=42,first_name='Parent',source='test',child_ages='10',
             data_consent_at=now(),marketing_consent_at=now(),consent_evidence='test evidence'))
         campaign=dict(paused=False,title='test',message_body='hello',question='yes?')
         client=SimpleNamespace(send_message=AsyncMock(side_effect=TimeoutError()))
         with patch.dict(os.environ,{'FAMILY_RADAR_OUTREACH_ENABLED':'true','DRY_RUN':'false'}),patch.object(main,'load_active',return_value=campaign):
             await main.send_radar(client);await main.send_radar(client)
-        self.assertEqual(client.send_message.await_count,1)
-        self.assertFalse(self.r.can_send(self.r.get(42),campaign)[0])
+        client.send_message.assert_not_called()
+        self.assertTrue(self.r.can_send(self.r.get(42),campaign)[0])
 
 
 class ModelTests(unittest.IsolatedAsyncioTestCase):
@@ -245,8 +251,9 @@ class AdditionalTests(unittest.IsolatedAsyncioTestCase):
     async def test_lead_notices_partial_failure_not_repeated(self):
         from lead_delivery import deliver_lead
         s=Store(':memory:');c=SimpleNamespace(send_message=AsyncMock(side_effect=[TimeoutError(),None]))
-        await deliver_lead(c,s,{'user_id':42},[1,2],'test')
-        await deliver_lead(c,s,{'user_id':42},[1,2],'test')
+        with patch.dict(os.environ,{'SAFE_TEST_MODE':'false'}):
+            await deliver_lead(c,s,{'user_id':42},[1,2],'test')
+            await deliver_lead(c,s,{'user_id':42},[1,2],'test')
         self.assertEqual(c.send_message.await_count,2)
         self.assertEqual([r[0] for r in s.db.execute('SELECT state FROM lead_notices ORDER BY recipient')],['uncertain','sent'])
 

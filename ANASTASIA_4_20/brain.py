@@ -51,6 +51,7 @@ async def respond(history: list[dict], campaign: dict | None = None, learning_no
         offer=offer_context(), campaign=campaign, client_context=client_context,
         learning_note=learning_note, settings=settings, configuration=configuration)
     client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"], timeout=30)
+    manager.llm_request(model)
     try:
         response = await client.responses.create(
             model=model,

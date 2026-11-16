@@ -57,3 +57,17 @@ def can_outreach(row: dict, today: date | None = None) -> tuple[bool, str]:
 def group_trigger(text: str, marker: str) -> bool:
     """Group participation only when a person explicitly tags the agreed marker."""
     return bool(marker and marker.casefold() in text.casefold())
+
+
+def valid_contact_permission(record, today=None):
+    """Shared, ID-bound permission check; never infer permission from a profile."""
+    today = today or date.today()
+    if not record or record.get('status') != 'granted' or record.get('declined_at'):
+        return False
+    if type(record.get('uid')) is not int or record['uid'] <= 0 or len(record.get('source','').strip()) < 5:
+        return False
+    try:
+        granted = date.fromisoformat(record.get('granted',''))
+    except (TypeError, ValueError):
+        return False
+    return today-timedelta(days=90) <= granted <= today

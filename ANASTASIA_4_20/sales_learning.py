@@ -15,6 +15,9 @@ from pathlib import Path
 
 
 STRATEGIES = {
+    "brief": "Кратко и предметно ответь на текущий вопрос, не требуя заполнить анкету.",
+    "detailed": "Если клиент просит детали занятия, объясни подтверждённое содержание и ограничения.",
+    "manager": "При необходимости предложи человека; передача только по актуальному согласию.",
     "result_first": "Сначала покажи конкретный результат, который ребёнок сможет попробовать, если запрос касается выбора занятия. Вопрос только при необходимости.",
     "interest_bridge": "Свяжи уже названный интерес ребёнка с одним подходящим направлением; не перечисляй каталог.",
     "objection_first": "Сначала ответь на сомнение родителя и снизь неопределённость; предложение записи пока не делай.",
@@ -58,6 +61,7 @@ class SalesLearning:
     def erase(self, user_id):
         with self.db:
             self.db.execute('DELETE FROM labels WHERE interaction_id IN (SELECT id FROM interactions WHERE user_id=?)', (user_id,))
+            self.db.execute('DELETE FROM strategy_results WHERE user_id=?',(user_id,))
             self.db.execute('DELETE FROM interactions WHERE user_id=?', (user_id,))
 
     def __init__(self, path: str | Path | None = None):
@@ -98,6 +102,11 @@ class SalesLearning:
             """
         )
         self.db.execute("INSERT OR IGNORE INTO settings(name,value) VALUES('enabled','1')")
+        columns={r[1] for r in self.db.execute('PRAGMA table_info(interactions)')}
+        for name in ('contact_source','selection_context'):
+            if name not in columns:
+                self.db.execute(f"ALTER TABLE interactions ADD COLUMN {name} TEXT NOT NULL DEFAULT 'unknown'")
+        self.db.execute('CREATE TABLE IF NOT EXISTS strategy_results (\n          user_id INTEGER PRIMARY KEY, interaction_id INTEGER NOT NULL, outcome TEXT NOT NULL,\n          actor_id INTEGER NOT NULL, at TEXT NOT NULL)')
         self.db.commit()
 
     @property
@@ -112,21 +121,32 @@ class SalesLearning:
     def bucket(self, text: str, contact: dict | None = None) -> str:
         return _bucket(text, contact)
 
-    def choose(self, bucket: str) -> str:
-        if bucket not in _BUCKETS:
-            bucket = "open"
-        rows = self.db.execute(
-            "SELECT strategy, COUNT(*) attempts, SUM(outcome = 'attended') positive "
-            "FROM interactions WHERE bucket=? GROUP BY strategy",
-            (bucket,),
-        ).fetchall()
-        stats = {r[0]: (int(r[1] or 0), int(r[2] or 0)) for r in rows}
-        # Give each framing a fair initial sample. Afterwards use a smoothed
-        # success rate; a strategy must earn its way into the default path.
-        least = min(STRATEGIES, key=lambda name: stats.get(name, (0, 0))[0])
-        if stats.get(least, (0, 0))[0] < 5:
-            return least
-        return max(STRATEGIES, key=lambda name: _safe_rate(*stats.get(name, (0, 0))[::-1]))
+    def strategy_stats(self, bucket, source='unknown'):
+        # One terminal observation per client, attributed to the latest strategy
+        # preceding the first verified outcome. Repeated turns are not trials.
+        rows=self.db.execute("""SELECT i.strategy,COUNT(*) n,SUM(r.outcome='attended') wins
+          FROM strategy_results r JOIN interactions i ON i.id=r.interaction_id
+          WHERE i.bucket=? AND i.contact_source=? GROUP BY i.strategy""",(bucket,source)).fetchall()
+        return {r[0]: (int(r[1]),int(r[2])) for r in rows}
+
+    def choose(self, bucket, source='unknown'):
+        default={'gaming':'interest_bridge','creative':'interest_bridge','exam':'brief',
+                 'price':'brief','objection':'objection_first'}.get(bucket,'brief')
+        stats=self.strategy_stats(bucket,source)
+        eligible={name:pair for name,pair in stats.items() if pair[0]>=30}
+        if len(eligible)<2:
+            return default
+        # Wilson intervals must not overlap before selecting a different framing.
+        def interval(n,k):
+            z=1.96; p=k/n; d=1+z*z/n
+            c=(p+z*z/(2*n))/d
+            h=z*((p*(1-p)/n+z*z/(4*n*n))**.5)/d
+            return c-h,c+h
+        bounds={name:interval(*pair) for name,pair in eligible.items()}
+        best=max(bounds,key=lambda name:bounds[name][0])
+        if all(bounds[best][0]>v[1] for name,v in bounds.items() if name!=best):
+            return best
+        return default
 
     def prompt_hint(self, text: str, contact: dict | None, history: list[dict], selection=None) -> str:
         from conversation_style import turn_state
@@ -134,32 +154,29 @@ class SalesLearning:
             return ""
         if not self.enabled:
             return "Обучаемый режим выключен: следуй утверждённой консультационной политике."
-        bucket, strategy = selection or (self.bucket(text, contact), self.choose(self.bucket(text, contact)))
-        recent = [r for r in self.db.execute(
-            "SELECT strategy,outcome FROM interactions WHERE bucket=? ORDER BY id DESC LIMIT 40", (bucket,)
-        ).fetchall()]
-        results = {}
-        for name in STRATEGIES:
-            sample = [r for r in recent if r[0] == name and r[1] != "pending"]
-            if sample:
-                results[name] = f"{sum(r[1] in _POSITIVE for r in sample)}/{len(sample)}"
-        score_text = ", ".join(f"{k}: {v}" for k, v in results.items()) or "пока нет размеченных исходов"
+        bucket, strategy = selection or (self.bucket(text, contact), self.choose(self.bucket(text, contact), (contact or {}).get('source') or 'unknown'))
+        stats=self.strategy_stats(bucket,(contact or {}).get('source') or 'unknown')
+        score_text=', '.join(f'{name}: {wins}/{n}' for name,(n,wins) in stats.items()) or 'нет подтверждённых исходов'
         return (
             f"Обучаемый менеджер: тип диалога={bucket}; рабочая стратегия={strategy}. "
             f"Правило стратегии: {STRATEGIES[strategy]} История по этому типу: {score_text}. "
-            "Это рекомендация по форме ответа, а не разрешение нарушать факты, согласия и запрет давления."
+            "Всегда сначала ответь на текущий вопрос. Выборка предварительная, превосходство не доказано. Это рекомендация по форме ответа, а не разрешение нарушать факты, согласия и запрет давления."
         )
 
     def record(self, user_id: int, text: str, parsed: dict, reply: str, contact: dict | None = None, selection=None) -> int | None:
         if not self.enabled:
             return None
-        bucket, strategy = selection or (self.bucket(text, contact), self.choose(self.bucket(text, contact)))
+        bucket, strategy = selection or (self.bucket(text, contact), self.choose(self.bucket(text, contact), (contact or {}).get('source') or 'unknown'))
         decision = parsed.get("trial_decision")
         outcome = "pending"
         cur = self.db.execute(
             "INSERT INTO interactions(user_id,bucket,strategy,outcome,next_action,trial_decision,response_chars,created_at) VALUES(?,?,?,?,?,?,?,?)",
             (user_id, bucket, strategy, outcome, parsed.get("next_action"), decision, len(reply), _now()),
         )
+        context = {'bucket':bucket,'age_known':bool((contact or {}).get('child_age')),
+                   'question_first':True,'selection':'context_or_confirmed_results'}
+        self.db.execute('UPDATE interactions SET contact_source=?,selection_context=? WHERE id=?',
+                        ((contact or {}).get('source') or 'unknown',json.dumps(context),cur.lastrowid))
         self.db.commit()
         return int(cur.lastrowid)
 
@@ -173,21 +190,28 @@ class SalesLearning:
             self.db.commit()
 
     def mark(self, interaction_id: int, outcome: str, actor_id: int | None = None) -> bool:
-        allowed = {"continued", "trial_interest", "lead", "attended", "paused", "lost", "handoff"}
+        if outcome in {'attended','missed'}:
+            from agent_config import require_admin
+            require_admin(actor_id)
+        allowed = {"missed","continued", "trial_interest", "lead", "attended", "paused", "lost", "handoff"}
         if outcome not in allowed:
             raise ValueError("Неизвестный исход")
         row = self.db.execute("SELECT id FROM interactions WHERE id=?", (interaction_id,)).fetchone()
         if not row:
             return False
+        if outcome in {'attended','missed'}:
+            uid=self.db.execute('SELECT user_id FROM interactions WHERE id=?',(interaction_id,)).fetchone()[0]
+            self.db.execute('INSERT OR IGNORE INTO strategy_results VALUES(?,?,?,?,?)',
+                            (uid,interaction_id,outcome,actor_id,_now()))
         self.db.execute("UPDATE interactions SET outcome=?,labeled_at=? WHERE id=?", (_safe_outcome(outcome), _now(), interaction_id))
         self.db.execute("INSERT INTO labels(interaction_id,outcome,actor_id,created_at) VALUES(?,?,?,?)", (interaction_id, outcome, actor_id, _now()))
         self.db.commit()
         return True
 
-    def mark_user(self, user_id: int, outcome: str) -> None:
+    def mark_user(self, user_id: int, outcome: str, actor_id=None) -> None:
         row = self.db.execute("SELECT id FROM interactions WHERE user_id=? ORDER BY id DESC LIMIT 1", (user_id,)).fetchone()
         if row:
-            self.mark(int(row[0]), outcome)
+            self.mark(int(row[0]), outcome, actor_id)
 
     def report(self) -> str:
         total = self.db.execute("SELECT COUNT(*) FROM interactions").fetchone()[0]
@@ -202,7 +226,12 @@ class SalesLearning:
         else:
             lines.append("Сценарии по типам диалогов:")
             for r in rows:
-                lines.append(f"• {r[0]} · {r[1]} — {r[3]}/{r[2]} подтверждённых посещений")
+                lines.append(f"• {r[0]} · {r[1]} — {r[3]}/{r[2]} старых меток посещения (не используются для выбора)")
+        lines.append('Проверенные исходы по источникам; малая выборка <30, причинность не установлена:')
+        for r in self.db.execute("""SELECT i.contact_source,i.bucket,i.strategy,COUNT(*),SUM(r.outcome='attended')
+            FROM strategy_results r JOIN interactions i ON i.id=r.interaction_id
+            GROUP BY i.contact_source,i.bucket,i.strategy"""):
+            lines.append(f'{r[0]} / {r[1]} / {r[2]}: {r[4]}/{r[3]}' + (' — малая выборка' if r[3]<30 else ''))
         recent = self.db.execute("SELECT id,bucket,strategy,outcome FROM interactions ORDER BY id DESC LIMIT 8").fetchall()
         if recent:
             lines.append("Последние ID для ручной разметки: " + ", ".join(f"#{r[0]} {r[1]}/{r[2]}={r[3]}" for r in recent))

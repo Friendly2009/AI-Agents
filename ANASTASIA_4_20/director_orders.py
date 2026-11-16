@@ -127,6 +127,8 @@ async def interpret(text:str):
     today=date.today().isoformat()
     from openai import AsyncOpenAI
     client=AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY'),timeout=45)
+    from manager import M
+    M.llm_request(os.getenv('DIRECTOR_MODEL',os.getenv('OPENAI_MODEL','gpt-5-mini')))
     response=await client.responses.create(
         model=os.getenv('DIRECTOR_MODEL',os.getenv('OPENAI_MODEL','gpt-5-mini')),
         instructions=(
@@ -148,6 +150,8 @@ async def interpret(text:str):
         max_output_tokens=1300,
         text={'format':{'type':'json_schema','name':'director_orders','strict':True,'schema':ORDER_SCHEMA}},
     )
+    if getattr(response,'usage',None):
+        M.usage(os.getenv('DIRECTOR_MODEL',os.getenv('OPENAI_MODEL','gpt-5-mini')),response.usage.input_tokens,response.usage.output_tokens)
     if not response.output_text: raise ValueError('GPT не вернул распоряжение')
     return _check_order(json.loads(response.output_text))
 
