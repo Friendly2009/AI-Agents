@@ -2,12 +2,15 @@
 import json, os, sqlite3
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from outgoing import safe_mode, send_once
 
 class Manager:
-    def __init__(self, path='data/manager.db'):
+    def __init__(self, path=None):
+        path = path if path is not None else str(Path(__file__).resolve().parent / "data" / "manager.db")
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db=sqlite3.connect(path)
         self.db.row_factory=sqlite3.Row
+        self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript('''
         CREATE TABLE IF NOT EXISTS messages(uid INTEGER, mid INTEGER, PRIMARY KEY(uid,mid));
         CREATE TABLE IF NOT EXISTS handoffs(uid INTEGER PRIMARY KEY, active INTEGER);
@@ -130,8 +133,12 @@ async def commands(client,event,store,admin=False):
         elif command=='/напомнить':M.remind(int(arg),uid);answer='Отправим одно напоминание в течение суток перед подтверждённым занятием. Отмена уведомлений: /стоп.'
         elif command in {'/подтвердить_бронь','/отменить_бронь'}:
             status='confirmed' if command=='/подтвердить_бронь' else 'cancelled'
+            if safe_mode():
+                await event.reply('SAFE TEST: изменение реальной брони и уведомление отключены.')
+                return True
             M.set_booking(int(arg),status);b=M.booking(int(arg))
-            await client.send_message(b['uid'],f"Бронь #{arg}: {'подтверждена менеджером' if status=='confirmed' else 'отменена менеджером'}. {b['course']}")
+            await send_once(store, f"booking:{b['id']}:{status}", b['uid'],
+                lambda: client.send_message(b['uid'],f"Бронь #{arg}: {'подтверждена менеджером' if status=='confirmed' else 'отменена менеджером'}. {b['course']}",parse_mode=None))
             answer='Статус обновлён локально. Это не запись занятия в AlfaCRM.'
         elif command=='/брони':answer='\n'.join(str(dict(r)) for r in M.db.execute('SELECT * FROM bookings ORDER BY id DESC LIMIT 25')) or 'Броней нет'
         elif command=='/вернуть_ии':M.handoff(int(arg),False);answer='Автоответы для этого клиента возобновлены.'

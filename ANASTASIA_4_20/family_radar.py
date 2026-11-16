@@ -49,6 +49,7 @@ class FamilyRadar:
         p.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(p)
         self.db.row_factory = sqlite3.Row
+        self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript('''
           CREATE TABLE IF NOT EXISTS families (
             user_id INTEGER PRIMARY KEY,
@@ -194,7 +195,7 @@ class FamilyRadar:
 
     def can_send(self, rec: dict, campaign: dict, date_now: datetime | None = None) -> tuple[bool,str]:
         date_now = date_now or datetime.now(timezone.utc)
-        if rec['stopped'] or rec['stage'] != 'complete':
+        if rec['stopped'] or rec.get('marketing_revoked_at') or rec['stage'] != 'complete':
             return False,'Неактивная регистрация или стоп-лист'
         if rec['city'] != 'Александров' or not rec['adult_confirmed']:
             return False,'Не подтверждён взрослый родитель из Александрова'
@@ -203,7 +204,12 @@ class FamilyRadar:
             return False,'Нет подходящего подтверждённого возраста'
         if not rec['data_consent_at'] or not rec['marketing_consent_at']:
             return False,'Нет согласия на получение приглашений'
-        ts = datetime.fromisoformat(rec['marketing_consent_at'])
+        try:
+            ts = datetime.fromisoformat(rec['marketing_consent_at'])
+            if ts.tzinfo is None:
+                return False,'Дата согласия без часового пояса'
+        except (ValueError, TypeError):
+            return False,'Некорректная дата согласия'
         if not (timedelta(0) <= date_now - ts <= timedelta(days=90)):
             return False,'Согласие старше 90 дней / некорректная дата'
         if campaign.get('paused', True):

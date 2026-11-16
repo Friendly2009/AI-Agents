@@ -1,6 +1,7 @@
 """Explicit director-controlled greeting batches; no automatic follow-ups."""
 import asyncio
 import re
+from outgoing import send_once
 
 
 def parse_names(text):
@@ -22,9 +23,10 @@ def greeting(name):
     return ('Добрый день'+(', '+name if name else '')+'! 🙂 Я Анастасия, ассистент Soft Skills в Александрове. Можно коротко рассказать о бесплатном занятии для детей?')
 
 class Invitations:
-    def __init__(self, client, store, safe, excluded_ids=()):
+    def __init__(self, client, store, safe, excluded_ids=(), consent=None):
         self.client,self.store,self.safe=client,store,safe
         self.excluded_ids=set(excluded_ids)
+        self.consent=consent or (lambda uid: False)
         self.collecting=set();self.drafts={};self.task=None;self.stop=asyncio.Event()
     async def handle(self,event):
         uid=event.sender_id;text=(event.raw_text or '').strip()
@@ -47,8 +49,8 @@ class Invitations:
                     if not isinstance(entity,types.User) or entity.bot or entity.deleted or entity.is_self or entity.id in self.excluded_ids:
                         preview.append('@'+name+': пропуск');continue
                     old=self.store.get(entity.id) or {}
-                    if entity.id in seen or old.get('stopped') or self.store.was_sent(entity.id) or self.store.history(entity.id):
-                        preview.append('@'+name+': уже общались / исключён');continue
+                    if entity.id in seen or old.get('stopped') or not self.consent(entity.id) or self.store.ever_contacted(entity.id) or self.store.history(entity.id):
+                        preview.append('@'+name+': нет действующего согласия / уже общались / исключён');continue
                     seen.add(entity.id);msg=greeting(entity.first_name)
                     targets.append((entity,msg,name));preview.append('@'+name+': '+msg)
                 self.drafts[uid]=targets;self.collecting.discard(uid)
@@ -70,17 +72,19 @@ class Invitations:
     async def run(self,event,batch):
         sent=0;skipped=0;error=''
         for entity,msg,name in batch:
-            if self.stop.is_set(): break
+            if self.stop.is_set() or self.safe() or self.store.outbound_blocked(): break
             if self.store.sent_today()>=10:
                 error='Достигнут внутренний дневной предел 10 отправок (это не гарантия отсутствия ограничений Telegram).';break
             old=self.store.get(entity.id) or {}
-            if entity.id in self.excluded_ids or old.get('stopped') or self.store.was_sent(entity.id) or self.store.history(entity.id):
+            if entity.id in self.excluded_ids or old.get('stopped') or not self.consent(entity.id) or self.store.ever_contacted(entity.id) or self.store.history(entity.id):
                 skipped+=1;continue
             try:
                 self.store.ensure(entity.id,username=name,source='Список директора: приветствие')
                 # Reserve before network call: ambiguous delivery must not retry automatically.
                 self.store.mark_sent(entity.id,'Список директора: попытка приветствия')
-                await self.client.send_message(entity,msg)
+                if not await send_once(self.store, f'greeting:{entity.id}', entity.id,
+                        lambda: self.client.send_message(entity,msg,parse_mode=None), self.safe):
+                    skipped+=1;continue
                 self.store.add_turn(entity.id,'assistant',msg);sent+=1
             except Exception as exc:
                 error='Отправка остановлена: '+type(exc).__name__+'. Последняя доставка может быть неопределённой; автоповтора нет.';break

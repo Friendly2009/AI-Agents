@@ -10,6 +10,8 @@ AI_DECLINE = {"нет", "не согласен", "не согласна"}
 
 def is_stop(text: str) -> bool:
     low = text.strip().lower()
+    if re.search(r"\b(?:не (?:надо|нужно) (?:мне )?писать|не присылайте|не связывайтесь со мной|прекратите (?:мне писать|рассылку)|больше не беспокойте)\b", low):
+        return True
     # Explicit communication withdrawal, never substrings inside «мне интересно».
     if re.search(r"\b(?:не пишите|не пиши|удалите мои данные|удалить данные)\b", low):
         return True

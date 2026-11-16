@@ -150,7 +150,11 @@ async def run_auto_join(client, *, selected: list[str] | None = None,
     `join_fn(username)` is injection point for tests. It returns 'joined' or
     'pending'. A real client uses channels.JoinChannelRequest only.
     """
+    from outgoing import safe_mode
     state = read_state(state_path)
+    if safe_mode() or state.get('restriction'):
+        return {"message": "SAFE TEST или ограничение Telegram: вступления отключены",
+                "attempts": 0, "joined": 0, "pending": 0, "preview": []}
     cooldown = state.get("cooldown_until")
     if cooldown:
         try:
@@ -180,7 +184,7 @@ async def run_auto_join(client, *, selected: list[str] | None = None,
     if join_fn is None:
         async def telegram_join(username):
             from telethon import functions
-            from telethon.errors import RPCError
+            from telethon.errors import RPCError, PeerFloodError
             try:
                 entity = await client.get_entity(username)
                 # Public Telegram channels and supergroups are Channel in MTProto.
@@ -188,6 +192,8 @@ async def run_auto_join(client, *, selected: list[str] | None = None,
                     return "invalid"
                 await client(functions.channels.JoinChannelRequest(entity))
                 return "joined"
+            except PeerFloodError:
+                return "blocked"
             except RPCError as exc:
                 name = type(exc).__name__.lower()
                 msg = str(exc).upper()
@@ -215,8 +221,15 @@ async def run_auto_join(client, *, selected: list[str] | None = None,
             attempts += 1
             joined += int(outcome == "joined")
             pending += int(outcome == "pending")
+            if outcome == 'blocked':
+                state['enabled'] = False
+                state['restriction'] = 'Telegram blocked joins; manual review required'
             save_state(state, state_path)
+            if outcome == 'blocked':
+                break
         except JoinFloodWait as exc:
+            state["enabled"] = False
+            state["restriction"] = "FloodWait; manual review required"
             _record(state, username, "failed", "FloodWait: дальнейшие попытки остановлены")
             state["cooldown_until"] = (datetime.now(timezone.utc) + timedelta(seconds=max(300, exc.seconds))).isoformat(timespec="seconds")
             save_state(state, state_path)

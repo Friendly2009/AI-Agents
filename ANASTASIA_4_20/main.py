@@ -20,6 +20,7 @@ from telethon.errors import FloodWaitError, RPCError
 
 from brain import respond
 from invitations import Invitations
+from outgoing import send_once
 from manual_dialogue import remember_opening, recover_opening
 from manager import Manager, M, commands as manager_commands
 from director_orders import (interpret as interpret_director_order, add_pending as add_director_pending,
@@ -34,7 +35,7 @@ from sales_learning import LEARNING
 from handoff_flow import requests_handoff, transfer_to_managers
 from policy import can_outreach, group_trigger, is_stop, is_yes, is_ai_decline, is_crm_consent
 from storage import Store
-from family_radar import FamilyRadar
+from family_radar import FamilyRadar, campaign_key
 from verified_leads import import_verified_csv, source_breakdown, format_pipeline
 from community_inspector import (normalize_public_community, inspect_community, save_scan, read_scans,
                                  format_scan, SEED_COMMUNITIES)
@@ -201,16 +202,31 @@ async def maybe_crm(client, user_id):
     if contact.get('crm_id'):
         status = 'карточка #' + str(contact['crm_id'])
     elif os.getenv('CRM_ENABLED','false').lower() == 'true':
+        from crm import _config
+        import hashlib
+        crm_key = "crm:" + hashlib.sha256((contact["city"] + ":" + contact["phone"]).encode()).hexdigest()
         try:
-            crm_id = await create_lead(contact)
-            if crm_id is not None:
+            configured = _config(contact['city'])
+        except ValueError:
+            configured = None
+        if not configured:
+            status = 'не настроена для города; заявка сохранена локально'
+        elif not STORE.claim_effect(crm_key):
+            return  # Another attempt owns delivery; ambiguous attempts need manual reconciliation.
+        else:
+            try:
+                crm_id = await create_lead(contact)
+                if crm_id is None:
+                    raise RuntimeError('CRM configuration changed during submission')
                 STORE.update(user_id, crm_id=crm_id)
+                STORE.finish_effect(crm_key, 'sent')
                 status = 'карточка #' + str(crm_id)
-            else:
-                status = 'не настроена для города; заявка сохранена локально'
-        except Exception:
-            LOG.exception('Ошибка AlfaCRM; заявка сохранена локально')
-            status = 'ошибка отправки; заявка сохранена локально, нужен повтор синхронизации'
+            except (Exception, asyncio.CancelledError) as exc:
+                STORE.finish_effect(crm_key, 'uncertain')
+                LOG.error('AlfaCRM: %s; результат требует сверки', type(exc).__name__)
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                status = 'результат неизвестен; нужна ручная сверка, автоповтор отключён'
     await deliver_lead(client, STORE, contact, director_admin_ids(0), status)
 
 
@@ -243,7 +259,9 @@ async def handle_dm(client, event):
             return
         if text.lower() in {'/удалить', '/delete'}:
             PENDING_QUESTIONS.pop(user_id, None)
-            RADAR.remove(user_id)
+            if not testing:
+                RADAR.remove(user_id)
+                LEARNING.erase(user_id)
             STORE.erase(user_id)
             M.erase(user_id)
             await event.reply('Удалены регистрация семьи и история локальной переписки. Оставлен только технический запрет на повторное обращение. Если данные ранее передавались в AlfaCRM, для удаления оттуда обратитесь к Soft Skills.')
@@ -309,6 +327,21 @@ async def handle_dm(client, event):
             return
         if not testing:
             LEARNING.mark_engaged(user_id, text)
+        if not contact.get('ai_consent'):
+            prior = STORE.history(user_id)
+            asked = bool(prior and prior[-1]['role'] == 'assistant' and prior[-1]['content'] == PERMISSION)
+            if asked and is_yes(text):
+                STORE.update(user_id, ai_consent=1, ai_notice_shown=1)
+                STORE.add_turn(user_id, 'user', text)
+                reply = 'Спасибо. Какой вопрос о занятиях хотите обсудить?'
+                STORE.add_turn(user_id, 'assistant', reply)
+                await event.reply(reply)
+            elif is_ai_decline(text):
+                await event.reply('Можно продолжить с менеджером Soft Skills: напишите /менеджер.')
+            else:
+                STORE.add_turn(user_id, 'assistant', PERMISSION)
+                await event.reply(PERMISSION)
+            return
         if not contact.get('ai_notice_shown'):
             if is_ai_decline(text):
                 await event.reply('Можно продолжить с менеджером Soft Skills: напишите /менеджер.')
@@ -359,9 +392,9 @@ async def handle_dm(client, event):
                 learning_bucket = LEARNING.bucket(text, contact)
                 learning_selection = (learning_bucket, LEARNING.choose(learning_bucket))
                 learning_note = LEARNING.prompt_hint(text, contact, history_for_ai, selection=learning_selection) if not testing else ''
-                parsed = await asyncio.wait_for(respond([{'role':'assistant','content':'Ранее известные сведения клиента: '+json.dumps(known_context(contact),ensure_ascii=False)}]+history_for_ai, campaign=load_active(), learning_note=learning_note),timeout=45)
-        except Exception:
-            LOG.exception('Ошибка API GPT')
+                parsed = await asyncio.wait_for(respond([{'role':'assistant','content':'Ранее известные сведения клиента: '+json.dumps(known_context(contact),ensure_ascii=False)}]+history_for_ai, campaign=load_active(), learning_note=learning_note, manager=M),timeout=45)
+        except Exception as exc:
+            LOG.error('Ошибка API GPT: %s', type(exc).__name__)
             reply = await transfer_to_managers(client, notice_owner, M, user_id, contact, 'Не удалось подготовить ответ: ' + text, STORE.history(user_id), testing)
             STORE.add_turn(user_id, 'assistant', reply)
             await event.reply(reply)
@@ -465,7 +498,7 @@ async def listen(client):
         # For owner-controlled sources only; disabled until /автовступление вкл.
         while True:
             try:
-                if os.getenv('AUTO_JOIN_ENABLED', 'false').lower() == 'true':
+                if not STORE.outbound_blocked() and os.getenv('AUTO_JOIN_ENABLED', 'false').lower() == 'true':
                     outcome = await run_auto_join(client)
                     if outcome['attempts'] or outcome['preview']:
                         LOG.info('AUTO JOIN: %s', outcome)
@@ -486,7 +519,11 @@ async def listen(client):
             await asyncio.sleep(max(15,int(os.getenv('OUTREACH_POLL_MINUTES','60'))) * 60)
     owner_id = (await client.get_me()).id
 
-    invitations = Invitations(client, STORE, safe_test_mode, director_admin_ids(owner_id) | {owner_id})
+    def invitation_consent(uid):
+        rec = RADAR.get(uid)
+        return bool(rec and RADAR.can_send(rec, {'paused': False, 'title': 'director_greeting'})[0])
+    invitations = Invitations(client, STORE, safe_test_mode,
+                              director_admin_ids(owner_id) | {owner_id}, invitation_consent)
 
     async def admin_commands(event):
         """All earlier commands are also available to either approved personal admin ID."""
@@ -545,7 +582,7 @@ async def listen(client):
                     elif not probe:
                         await director_reply(client,event, 'Напиши /тест GPT Здравствуйте')
                     else:
-                        answer = await respond([{'role': 'user', 'content': probe}], campaign=load_active())
+                        answer = await respond([{'role': 'user', 'content': probe}], campaign=load_active(), manager=Manager(':memory:'))
                         await director_reply(client,event, '🧪 Ответ Анастасии (только Избранное):\n' + str(answer.get('reply',''))[:500])
                 elif message == '/каталог':
                     await director_reply(client,event, catalog_report('все'))
@@ -788,11 +825,12 @@ async def listen(client):
             if os.getenv('REMINDERS_ENABLED','false').lower()=='true':
                 for b in M.due():
                     contact=STORE.get(b['uid']) or {}
-                    if contact.get('stopped'): continue
+                    if contact.get('stopped') or safe_test_mode() or STORE.outbound_blocked(): continue
                     # Mark before send: ambiguous delivery never triggers duplicate automatic reminders.
                     with M.db: M.db.execute('UPDATE bookings SET sent=1 WHERE id=?',(b['id'],))
                     try:
-                        await client.send_message(b['uid'],f"Напоминаем: {b['course']}, {b['starts']} (UTC). Бронь #{b['id']}. Отмена: /отмена {b['id']}")
+                        await send_once(STORE, f"reminder:{b['id']}", b['uid'],
+                            lambda: client.send_message(b['uid'],f"Напоминаем: {b['course']}, {b['starts']} (UTC). Бронь #{b['id']}. Отмена: /отмена {b['id']}",parse_mode=None))
                     except Exception:
                         await notice_owner(client,f"Не удалось доставить напоминание по брони #{b['id']}. Проверьте вручную.")
             await asyncio.sleep(60)
@@ -814,58 +852,12 @@ async def listen(client):
 async def send_optins(client):
     print('Режим CSV-аутрича из v2 в FAMILY RADAR v3 отключён: он не подтверждает возраст ребёнка. Используйте регистрацию /семья и send-radar.')
     return
-    if os.getenv('OUTREACH_ENABLED', 'false').lower() != 'true':
-        print('Исходящие отправки выключены. Для активации: OUTREACH_ENABLED=true')
-        return
-    campaign = load_active()
-    if campaign.get('paused', True):
-        print('Исходящая кампания на паузе. В Избранном: /возобновить или /идея ... затем /утвердить')
-        return
-    dry_run = os.getenv('DRY_RUN', 'true').lower() == 'true'
-    path = BASE / 'consented_contacts.csv'
-    if not path.exists():
-        print(f'Нет файла: {path}')
-        return
-    max_daily = max(1, min(int(os.getenv('DAILY_LIMIT', '10')), 30))
-    interval = max(60, int(os.getenv('SEND_INTERVAL_SECONDS', '120')))
-    with path.open(encoding='utf-8-sig', newline='') as f:
-        contacts = list(csv.DictReader(f))
-    for row in contacts:
-        ok, reason = can_outreach(row)
-        if not ok:
-            print(f'Пропуск {row.get("username", "неизвестно")}: {reason}')
-            continue
-        if STORE.sent_today() >= max_daily:
-            print(f'Суточный лимит {max_daily} достигнут')
-            break
-        username = row['username'].strip()
-        try:
-            entity = await client.get_entity(username)
-            if getattr(entity, 'bot', False):
-                continue
-            user_id = entity.id
-            old = STORE.get(user_id)
-            if (old and old['stopped']) or STORE.was_sent(user_id):
-                print(f'Пропуск {username}: стоп-лист или уже обращались')
-                continue
-            message = compose_first_message(row.get('first_name', ''), campaign)
-            if dry_run:
-                print(f'[ПРОВЕРКА БЕЗ ОТПРАВКИ] @{username}: {message}')
-                continue
-            await client.send_message(entity, message)
-            STORE.ensure(user_id, username=username.lstrip('@'), city=row['city'].strip(), source=row['consent_source'].strip())
-            STORE.mark_sent(user_id, row['consent_source'])
-            print(f'Разрешённое обращение отправлено: @{username}')
-            await asyncio.sleep(interval)
-        except FloodWaitError as e:
-            print(f'Telegram требует паузу {e.seconds} сек; выполнение остановлено')
-            break
-        except RPCError as e:
-            print(f'Ошибка Telegram для {username}: {type(e).__name__}. Продолжение без обходов.')
 
 
 async def send_radar(client):
     """Campaign follow-ups ONLY to consenting adults who initiated contact."""
+    if safe_test_mode() or STORE.outbound_blocked():
+        return
     if os.getenv('FAMILY_RADAR_OUTREACH_ENABLED','false').lower() != 'true':
         print('FAMILY_RADAR_OUTREACH_ENABLED=false: рассылка отключена')
         return
@@ -877,6 +869,8 @@ async def send_radar(client):
     daily_limit = max(1,min(int(os.getenv('DAILY_LIMIT','10')),20))
     interval = max(60,int(os.getenv('SEND_INTERVAL_SECONDS','120')))
     for rec in RADAR.candidates():
+        if safe_test_mode() or STORE.outbound_blocked():
+            break
         if STORE.sent_today() + RADAR.sent_today() >= daily_limit:
             print('Достигнут суточный лимит отправок')
             return
@@ -896,15 +890,19 @@ async def send_radar(client):
             print(f'[БЕЗ ОТПРАВКИ] ID {rec["user_id"]}: {message}')
             continue
         try:
-            await client.send_message(rec['user_id'],message)
+            # Reserve campaign/cooldown before the network; never retry uncertain delivery.
             RADAR.mark_sent(rec['user_id'],campaign)
+            if not await send_once(STORE, f'radar:{rec["user_id"]}:{campaign_key(campaign)}',
+                    rec['user_id'], lambda: client.send_message(rec['user_id'],message,parse_mode=None)):
+                continue
             print(f'Приглашение отправлено существующему подписчику {rec["user_id"]}')
             await asyncio.sleep(interval)
         except FloodWaitError as e:
             print(f'Ограничение Telegram: остановка отправки на {e.seconds} секунд')
             break
-        except RPCError as ex:
-            print(f'Telegram error: {type(ex).__name__}; без обхода ограничений')
+        except Exception as ex:
+            print(f'Отправки остановлены: {type(ex).__name__}; результат требует проверки')
+            break
 
 
 async def discover(client):
@@ -970,9 +968,10 @@ async def main():
     except sqlite3.OperationalError:
         raise SystemExit('Анастасия уже запущена из этой папки. Закройте первое окно.')
     aid, ahash = settings()
-    client = TelegramClient(str(session_path()), aid, ahash)
-    await client.start(phone=os.getenv('TG_PHONE', '').strip() or None)
+    client = TelegramClient(str(session_path()), aid, ahash, flood_sleep_threshold=0,
+                            request_retries=0, raise_last_call_error=True)
     try:
+        await client.start(phone=os.getenv('TG_PHONE', '').strip() or None)
         if args.mode == 'listen':
             await listen(client)
         elif args.mode == 'send-optins':
@@ -988,7 +987,10 @@ async def main():
         elif args.mode == 'retry-crm':
             await retry_crm(client)
     finally:
-        await client.disconnect()
+        try:
+            await client.disconnect()
+        finally:
+            process_lock.close()
 
 
 if __name__ == '__main__':

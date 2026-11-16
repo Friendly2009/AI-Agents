@@ -49,18 +49,29 @@ def _create(customer):
     if source.isdigit():
         body["lead_source_id"] = int(source)
     # Prevent duplicate leads in AlfaCRM when a matching phone already exists.
-    found = _post(f"{base}/v2api/{branch}/customer/index", {"phone": customer["phone"], "is_study": 2, "page": 0}, {"X-ALFACRM-TOKEN": token})
-    for item in found.get("items", []):
-        existing_id = item.get("id")
-        phones=item.get('phone',[])
-        if not isinstance(phones,list): phones=[phones]
-        digits=lambda x: ''.join(c for c in str(x) if c.isdigit())[-10:]
-        if existing_id and any(digits(x)==digits(customer['phone']) for x in phones):
-            return int(existing_id)
+    digits = lambda x: ''.join(c for c in str(x) if c.isdigit())[-10:]
+    for page in range(100):
+        found = _post(f"{base}/v2api/{branch}/customer/index",
+                      {"phone": customer["phone"], "is_study": 2, "removed": 1, "page": page},
+                      {"X-ALFACRM-TOKEN": token})
+        if not isinstance(found, dict) or not isinstance(found.get("items"), list):
+            raise RuntimeError("AlfaCRM lookup failed; creation blocked")
+        items = found['items']
+        if not items:
+            break
+        for item in items:
+            existing_id = item.get("id")
+            phones = item.get('phone', [])
+            if not isinstance(phones, list):
+                phones = [phones]
+            if existing_id and any(digits(x) == digits(customer['phone']) for x in phones):
+                return int(existing_id)
+    else:
+        raise RuntimeError('AlfaCRM lookup pagination limit; creation blocked')
     # In AlfaCRM each branch is routed through /{branch}/customer/create.
     result = _post(f"{base}/v2api/{branch}/customer/create", body, {"X-ALFACRM-TOKEN": token})
     if not result.get("success") or not result.get("model", {}).get("id"):
-        raise RuntimeError(f"AlfaCRM отказала в создании лида: {result.get('errors')}")
+        raise RuntimeError('AlfaCRM отказала в создании лида')
     return int(result["model"]["id"])
 
 

@@ -55,8 +55,13 @@ def _safe_rate(successes: int, attempts: int) -> float:
 
 
 class SalesLearning:
-    def __init__(self, path: str | Path = "data/sales_learning.db"):
-        self.path = str(path)
+    def erase(self, user_id):
+        with self.db:
+            self.db.execute('DELETE FROM labels WHERE interaction_id IN (SELECT id FROM interactions WHERE user_id=?)', (user_id,))
+            self.db.execute('DELETE FROM interactions WHERE user_id=?', (user_id,))
+
+    def __init__(self, path: str | Path | None = None):
+        self.path = str(path if path is not None else Path(__file__).resolve().parent / "data" / "sales_learning.db")
         if self.path == ":memory:":
             self.db = sqlite3.connect(self.path)
         else:
