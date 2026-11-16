@@ -15,7 +15,7 @@ def ready_for_recording(contact):
     return bool(contact.get('wants_trial') and all(contact.get(k) for k in ('name','phone','city','course')))
 
 def known_context(contact):
-    return {k: contact.get(k) for k in ('name','phone','city','course','child_age','wanted_time','wants_trial','crm_consent','crm_id','consultation_notes')}
+    return {k: contact.get(k) for k in ('name','phone','city','course','child_age','wanted_time','wants_trial','crm_consent','crm_id','consultation_notes','speech_preferences')}
 
 def recording_refused(history):
     for index in range(len(history)-1, 0, -1):

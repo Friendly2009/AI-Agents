@@ -43,6 +43,8 @@ class Store:
         );
         """)
         columns = {r[1] for r in self.db.execute("PRAGMA table_info(contacts)")}
+        if 'speech_preferences' not in columns:
+            self.db.execute("ALTER TABLE contacts ADD COLUMN speech_preferences TEXT")
         if 'consultation_notes' not in columns:
             self.db.execute("ALTER TABLE contacts ADD COLUMN consultation_notes TEXT")
         if 'submission_pending' not in columns:
@@ -65,7 +67,7 @@ class Store:
             return
         valid = {"username", "city", "source", "ai_consent", "crm_consent", "stopped",
                  "submission_pending", "ai_notice_shown", "initial_sent", "name", "phone", "course", "child_age", "wanted_time",
-                 "wants_trial", "crm_id", "pending_notified", "consultation_notes"}
+                 "wants_trial", "crm_id", "pending_notified", "consultation_notes", "speech_preferences"}
         if not set(fields) <= valid:
             raise ValueError("Forbidden contact fields")
         fields["updated_at"] = utc_now()
@@ -98,7 +100,7 @@ class Store:
         self.ensure(user_id)
         self.db.execute("DELETE FROM turns WHERE user_id=?", (user_id,))
         # Retain minimal suppression record to prevent unwanted re-contact.
-        self.db.execute("UPDATE contacts SET consultation_notes=NULL,username=NULL,city=NULL,source=NULL,ai_consent=0,crm_consent=0,stopped=1,submission_pending=0,name=NULL,phone=NULL,course=NULL,child_age=NULL,wanted_time=NULL,wants_trial=0,pending_notified=0,updated_at=? WHERE user_id=?",
+        self.db.execute("UPDATE contacts SET speech_preferences=NULL,consultation_notes=NULL,username=NULL,city=NULL,source=NULL,ai_consent=0,crm_consent=0,stopped=1,submission_pending=0,name=NULL,phone=NULL,course=NULL,child_age=NULL,wanted_time=NULL,wants_trial=0,pending_notified=0,updated_at=? WHERE user_id=?",
                         (utc_now(), user_id))
         self.db.commit()
 

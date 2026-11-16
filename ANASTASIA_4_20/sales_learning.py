@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 STRATEGIES = {
-    "result_first": "Сначала покажи конкретный результат, который ребёнок сможет попробовать, затем задай один естественный вопрос.",
+    "result_first": "Сначала покажи конкретный результат, который ребёнок сможет попробовать, если запрос касается выбора занятия. Вопрос только при необходимости.",
     "interest_bridge": "Свяжи уже названный интерес ребёнка с одним подходящим направлением; не перечисляй каталог.",
     "objection_first": "Сначала ответь на сомнение родителя и снизь неопределённость; предложение записи пока не делай.",
     "choice_light": "Дай родителю небольшой понятный выбор из двух подходящих вариантов, без анкеты и давления.",
@@ -129,6 +129,9 @@ class SalesLearning:
         return max(STRATEGIES, key=lambda name: _safe_rate(*stats.get(name, (0, 0))[::-1]))
 
     def prompt_hint(self, text: str, contact: dict | None, history: list[dict], selection=None) -> str:
+        from conversation_style import turn_state
+        if self.enabled and not turn_state(history, preferences=(contact or {}).get('speech_preferences'))['allow_learning']:
+            return ""
         if not self.enabled:
             return "Обучаемый режим выключен: следуй утверждённой консультационной политике."
         bucket, strategy = selection or (self.bucket(text, contact), self.choose(self.bucket(text, contact)))

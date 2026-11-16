@@ -30,6 +30,7 @@ from campaigns import (load_active, load_draft, compose_first_message, draft_fro
                        activate_draft, pause_campaign, resume_campaign)
 from crm import create_lead
 from lead_delivery import deliver_lead
+from conversation_style import preference_updates, read_preferences, turn_state
 from sales_context import guard_sales_action
 from sales_learning import LEARNING
 from handoff_flow import requests_handoff, transfer_to_managers
@@ -321,7 +322,7 @@ async def handle_dm(client, event):
             reply = 'Ваш вопрос ожидает ответа менеджера. Чтобы продолжить со мной, напишите «продолжим».'
             if text.lower().strip('.! ') == 'продолжим':
                 M.handoff(user_id, False)
-                reply = 'Продолжим 🙂 Что хотите уточнить?'
+                reply = 'Продолжим. Что хотите уточнить?'
             STORE.add_turn(user_id, 'assistant', reply)
             await event.reply(reply)
             return
@@ -346,7 +347,7 @@ async def handle_dm(client, event):
             if is_ai_decline(text):
                 await event.reply('Можно продолжить с менеджером Soft Skills: напишите /менеджер.')
                 return
-            intro = 'Я Анастасия, ассистент Soft Skills 🙂 Помогу разобраться с занятиями.'
+            intro = 'Я Анастасия, ассистент Soft Skills. Помогу разобраться с занятиями.'
             if is_greeting(text):
                 intro += ' Что хотели бы узнать?'
             await client.send_message(event.chat_id, intro)
@@ -356,6 +357,7 @@ async def handle_dm(client, event):
                 STORE.add_turn(user_id, 'user', text)
                 STORE.add_turn(user_id, 'assistant', intro)
                 return
+            STORE.add_turn(user_id, 'assistant', intro)
             pending = PENDING_QUESTIONS.pop(user_id, [])
             if pending:
                 text = '\n'.join(pending + [text])
@@ -378,11 +380,16 @@ async def handle_dm(client, event):
             return
 
         if is_greeting(text) and not STORE.history(user_id):
-            reply = 'Привет 🙂 Что хотели бы узнать о занятиях?'
+            reply = 'Привет! Что хотели бы узнать о занятиях?'
             STORE.add_turn(user_id, 'user', text)
             STORE.add_turn(user_id, 'assistant', reply)
             await event.reply(reply)
             return
+        preferences = read_preferences(contact.get('speech_preferences'))
+        preferences.update(preference_updates(text))
+        if preferences:
+            STORE.update(user_id, speech_preferences=json.dumps(preferences, ensure_ascii=False))
+            contact = STORE.get(user_id)
         STORE.add_turn(user_id, 'user', text)
         # Recording consent is accepted only as an answer to the explicit recording question.
         try:
@@ -392,7 +399,7 @@ async def handle_dm(client, event):
                 learning_bucket = LEARNING.bucket(text, contact)
                 learning_selection = (learning_bucket, LEARNING.choose(learning_bucket))
                 learning_note = LEARNING.prompt_hint(text, contact, history_for_ai, selection=learning_selection) if not testing else ''
-                parsed = await asyncio.wait_for(respond([{'role':'assistant','content':'Ранее известные сведения клиента: '+json.dumps(known_context(contact),ensure_ascii=False)}]+history_for_ai, campaign=load_active(), learning_note=learning_note, manager=M),timeout=45)
+                parsed = await asyncio.wait_for(respond(history_for_ai, campaign=load_active(), learning_note=learning_note, manager=M, client_context=known_context(contact)),timeout=45)
         except Exception as exc:
             LOG.error('Ошибка API GPT: %s', type(exc).__name__)
             reply = await transfer_to_managers(client, notice_owner, M, user_id, contact, 'Не удалось подготовить ответ: ' + text, STORE.history(user_id), testing)
@@ -400,6 +407,12 @@ async def handle_dm(client, event):
             await event.reply(reply)
             return
         parsed = guard_sales_action(parsed, text)
+        state = turn_state(history_for_ai, preferences=contact.get('speech_preferences'))
+        if state['suppress_sales']:
+            parsed['wants_trial'] = False
+            parsed['trial_decision'] = 'no' if state['mood'] == 'ending' else None
+            if not parsed.get('handoff'):
+                parsed['next_action'] = 'pause' if state['mood'] == 'ending' else 'answer'
         updates = {}
         for key in ('city', 'course', 'parent_name', 'phone', 'child_age', 'wanted_time'):
             val = parsed.get(key)

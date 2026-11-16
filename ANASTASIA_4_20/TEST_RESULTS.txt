@@ -1,0 +1,11 @@
+Validation date: 2026-11-16
+Baseline: 64 passed, 10 subtests passed (1.11s)
+Final: 149 passed, 10 subtests passed (1.00s)
+Command: python run_tests.py
+Python: 3.12; isolated dependency directory was supplied via PYTHONPATH.
+Network disabled by tests/conftest.py; SDK and transport calls mocked.
+Syntax: python -m compileall -q . (exit 0)
+Structured Output: schema AST unchanged from supplied archive.
+Dialogue scenarios: 62; new tests: 85.
+Live model evaluation: NOT RUN. Human scoring: NOT RUN.
+Telegram delivery and live CRM: NOT RUN.
