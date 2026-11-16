@@ -1,0 +1,80 @@
+<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Анастасия · Настройки</title><style>
+:root{font:16px/1.55 system-ui;color:#192f38;background:#f3f6f7}body{max-width:1100px;margin:32px auto;padding:0 24px}
+h1{font-size:30px;margin-bottom:4px}h2{font-size:21px}nav{display:flex;gap:20px;flex-wrap:wrap;margin:24px 0}
+a{color:#176b65}section{background:white;border:1px solid #dce5e7;border-radius:14px;padding:24px;margin:20px 0}
+label{display:block;color:#3c555e;font-size:14px}input,select,textarea{display:block;box-sizing:border-box;width:100%;padding:10px;border:1px solid #b6c8cc;border-radius:7px;background:#fff;color:#192f38;font:inherit;margin:5px 0 14px}
+textarea{min-height:150px}button{padding:11px 18px;border:0;border-radius:7px;background:#176b65;color:white;font:inherit;margin:8px 8px 8px 0;cursor:pointer}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 24px}.muted{color:#62777e}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f6f7;padding:16px;border-radius:8px;font-size:13px}table{width:100%;border-collapse:collapse}td,th{text-align:left;border-bottom:1px solid #e2e9eb;padding:9px}.notice{padding:16px;background:#e2f1ed;border-radius:9px}
+</style><p class="notice">Статический офлайн-пример · вымышленные данные · формы отключены</p><h1>Анастасия Владимировна</h1><p class="muted">Управление консультантом · локальная панель</p><nav><a href="#general">Общие</a><a href="#character">Характер</a><a href="#prompts">Промпты</a><a href="#clients">Клиенты</a><a href="#integrations">Интеграции</a><a href="#testing">Тестирование</a></nav><p class="muted">Администратор 101 · версия 1 · global / global</p><form inert method="post" action="/"><input type="hidden" name="csrf" value="DEMO-NOT-A-SESSION"><input type="hidden" name="action" value="logout"><button disabled>Выйти</button></form><section><h2>Область настроек</h2><form inert method="get"><div class="grid"><label>Область<select name="scope"><option value="global" selected>global</option><option value="group">group</option><option value="client">client</option></select></label><label>global / название группы / Telegram ID клиента<input name="target" type="text" value="global" required></label></div><button disabled>Открыть или создать</button></form><p class="muted">Пустое поле наследует значение. У клиента одна группа; персональные значения имеют приоритет.</p></section><section><h2>Сохранённые области</h2><p><a href="/?scope=client&amp;target=4242">client / 4242</a></p><p><a href="/?scope=global&amp;target=global">global / global</a></p><p><a href="/?scope=group&amp;target=%D0%98%D0%BD%D1%82%D0%B5%D1%80%D0%B5%D1%81%D1%83%D1%8E%D1%82%D1%81%D1%8F+%D0%BF%D1%80%D0%BE%D0%B3%D1%80%D0%B0%D0%BC%D0%BC%D0%B8%D1%80%D0%BE%D0%B2%D0%B0%D0%BD%D0%B8%D0%B5%D0%BC">group / Интересуются программированием</a></p></section><form inert method="post" action="/"><input type="hidden" name="csrf" value="DEMO-NOT-A-SESSION"><input type="hidden" name="action" value="save"><input type="hidden" name="scope" value="global"><input type="hidden" name="target" value="global"><input type="hidden" name="revision" value="1"><section id="general"><h2>Общие</h2><div class="grid"><label>Имя консультанта<input name="setting_agent_display_name" type="text" value=""></label><label>Язык<select name="setting_response_language"><option value="" selected>Наследовать</option><option value="ru">ru</option><option value="en">en</option></select></label><label>Модель LLM<input name="setting_model" type="text" value=""></label><label>Режим работы<select name="setting_mode"><option value="" selected>Наследовать</option><option value="active">active</option><option value="paused">paused</option></select></label><label>Разрешать допустимые исходящие<select name="setting_outbound_allowed"><option value="" selected>Наследовать</option><option value="true">true</option><option value="false">false</option></select></label></div><p class="muted">Разрешение исходящих не заменяет согласия клиента и SAFE_TEST_MODE.</p></section><section id="character"><h2>Характер</h2><div class="grid"><label>conversation_style<select name="setting_conversation_style"><option value="">Наследовать</option><option value="friendly" selected>friendly</option><option value="professional">professional</option><option value="casual">casual</option><option value="concise">concise</option><option value="detailed">detailed</option></select></label><label>mood<select name="setting_mood"><option value="" selected>Наследовать</option><option value="neutral">neutral</option><option value="cheerful">cheerful</option><option value="calm">calm</option><option value="serious">serious</option></select></label><label>emoji_frequency<select name="setting_emoji_frequency"><option value="" selected>Наследовать</option><option value="none">none</option><option value="rare">rare</option><option value="moderate">moderate</option></select></label><label>humor_level<select name="setting_humor_level"><option value="" selected>Наследовать</option><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label><label>warmth<select name="setting_warmth"><option value="">Наследовать</option><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4" selected>4</option><option value="5">5</option></select></label><label>formality<select name="setting_formality"><option value="" selected>Наследовать</option><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label><label>initiative<select name="setting_initiative"><option value="" selected>Наследовать</option><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label><label>verbosity<select name="setting_verbosity"><option value="" selected>Наследовать</option><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></label></div></section><section id="prompts"><h2>Промпты</h2><p>Редактируется дополнительная манера общения. Ограничения безопасности и согласий закреплены в коде.</p><label>Дополнительные инструкции<textarea name="prompt" maxlength="6000">Объясняй учебные проекты понятными примерами.</textarea></label><button disabled>Проверить и сохранить</button></section></form><section><h2>История и применение</h2><p>Состояние: включено</p><form inert method="post" action="/"><input type="hidden" name="csrf" value="DEMO-NOT-A-SESSION"><input type="hidden" name="action" value="disable"><input type="hidden" name="scope" value="global"><input type="hidden" name="target" value="global"><input type="hidden" name="revision" value="1"><button disabled>Отключить</button></form><form inert method="post" action="/"><input type="hidden" name="csrf" value="DEMO-NOT-A-SESSION"><input type="hidden" name="action" value="enable"><input type="hidden" name="scope" value="global"><input type="hidden" name="target" value="global"><input type="hidden" name="revision" value="1"><button disabled>Включить</button></form><form inert method="post" action="/"><input type="hidden" name="csrf" value="DEMO-NOT-A-SESSION"><input type="hidden" name="action" value="delete"><input type="hidden" name="scope" value="global"><input type="hidden" name="target" value="global"><input type="hidden" name="revision" value="1"><button disabled>Удалить текущую версию</button></form><pre>[
+  {
+    &quot;revision&quot;: 1,
+    &quot;actor&quot;: 101,
+    &quot;action&quot;: &quot;save&quot;,
+    &quot;at&quot;: &quot;2026-11-16T15:45:00.874440+00:00&quot;
+  }
+]</pre><form inert method="post" action="/"><input type="hidden" name="csrf" value="DEMO-NOT-A-SESSION"><input type="hidden" name="action" value="rollback"><input type="hidden" name="scope" value="global"><input type="hidden" name="target" value="global"><input type="hidden" name="revision" value="1"><label>Номер версии для отката<input name="version" type="number" value="" required></label><button disabled>Откатить</button></form><details><summary>Предпросмотр: итоговые параметры и конфликты</summary><pre>{
+  &quot;values&quot;: {
+    &quot;humor_level&quot;: 3,
+    &quot;warmth&quot;: 4,
+    &quot;formality&quot;: 3,
+    &quot;initiative&quot;: 3,
+    &quot;verbosity&quot;: 3,
+    &quot;conversation_style&quot;: &quot;friendly&quot;,
+    &quot;mood&quot;: &quot;neutral&quot;,
+    &quot;emoji_frequency&quot;: &quot;rare&quot;,
+    &quot;response_language&quot;: &quot;ru&quot;,
+    &quot;agent_display_name&quot;: &quot;Анастасия Владимировна&quot;,
+    &quot;model&quot;: &quot;gpt-5-mini&quot;,
+    &quot;mode&quot;: &quot;active&quot;,
+    &quot;outbound_allowed&quot;: true
+  },
+  &quot;prompts&quot;: [
+    {
+      &quot;scope&quot;: &quot;global&quot;,
+      &quot;text&quot;: &quot;Объясняй учебные проекты понятными примерами.&quot;
+    }
+  ],
+  &quot;versions&quot;: {
+    &quot;global&quot;: 1
+  },
+  &quot;warnings&quot;: []
+}</pre></details></section><section id="clients"><h2>Клиенты</h2><form inert method="get"><label>Поиск по имени или Telegram ID<input name="search" type="text" value=""></label><button disabled>Найти</button></form><table><tr><th>Клиент</th><th>Статус</th><th>Действия</th></tr><tr><td><a href="/?scope=client&amp;target=4242">Демонстрационный клиент</a><br>Интересуются программированием</td><td>Интерес к занятию</td><td><form inert method="post" action="/"><input type="hidden" name="csrf" value="DEMO-NOT-A-SESSION"><input type="hidden" name="action" value="stop"><input type="hidden" name="uid" value="4242"><button disabled>Запретить общение</button></form><form inert method="post" action="/"><input type="hidden" name="csrf" value="DEMO-NOT-A-SESSION"><input type="hidden" name="action" value="handoff"><input type="hidden" name="uid" value="4242"><button disabled>В очередь сотрудника</button></form></td></tr></table></section><section id="integrations"><h2>Интеграции</h2><pre>{
+  &quot;OpenAI&quot;: {
+    &quot;configured&quot;: false,
+    &quot;connection&quot;: &quot;не проверено; проверка — тестовый ответ&quot;
+  },
+  &quot;Telegram&quot;: {
+    &quot;configured&quot;: false,
+    &quot;connection&quot;: &quot;неизвестно; панель не подключает Telegram&quot;
+  },
+  &quot;AlfaCRM&quot;: {
+    &quot;enabled&quot;: false,
+    &quot;Александров&quot;: false,
+    &quot;Ярославль&quot;: false,
+    &quot;connection&quot;: &quot;не проверено; реальные заявки из панели не создаются&quot;
+  },
+  &quot;SAFE_TEST_MODE&quot;: true
+}</pre><p class="muted">Ключи и Telegram-сессии не отображаются. Обновление секретов — только в существующем .env на компьютере агента.</p></section><section id="testing"><h2>Тестирование</h2><p>Выбрана текущая область. Тестовые сообщения и ответ не записываются в историю клиентов. Telegram и CRM не вызываются.</p><form inert method="post" action="/"><input type="hidden" name="csrf" value="DEMO-NOT-A-SESSION"><input type="hidden" name="action" value="preview"><input type="hidden" name="scope" value="global"><input type="hidden" name="target" value="global"><input type="hidden" name="revision" value="1"><label>Тестовый диалог: JSON-массив user/assistant<textarea name="dialogue">[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;Расскажите о занятиях&quot;}]</textarea></label><button disabled>Предпросмотр запроса</button></form><form inert method="post" action="/"><input type="hidden" name="csrf" value="DEMO-NOT-A-SESSION"><input type="hidden" name="action" value="test"><input type="hidden" name="scope" value="global"><input type="hidden" name="target" value="global"><input type="hidden" name="revision" value="1"><label>Тестовый диалог: JSON-массив user/assistant<textarea name="dialogue">[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;Расскажите о занятиях&quot;}]</textarea></label><button disabled>Получить ответ LLM</button></form></section><section><h2>Занятия и аналитика</h2><pre>[]</pre><pre>За всё время (включая тесты):
+Контактов: 1; заявок: 1; лидов CRM: 0; подтверждённых броней: 0
+Контакт → заявка: 100.0%
+GPT: 0 вызовов; токены 0 / 0; оценка стоимости: не рассчитано: заполните тарифы API. Голосовой API в сумму не включён.</pre><form inert method="post" action="/"><input type="hidden" name="csrf" value="DEMO-NOT-A-SESSION"><input type="hidden" name="action" value="slot"><div class="grid"><label>Город<select name="city"><option value="Александров" selected>Александров</option><option value="Ярославль">Ярославль</option></select></label><label>Название занятия<input name="course" type="text" value="" required></label><label>Дата ISO, например 2027-01-20T18:00:00+03:00<input name="starts" type="text" value="" required></label><label>Количество мест<input name="capacity" type="number" value="10" required></label></div><button disabled>Добавить занятие</button></form></section><section><h2>Аудит операций</h2><pre>[
+  {
+    &quot;actor&quot;: 101,
+    &quot;action&quot;: &quot;save&quot;,
+    &quot;target&quot;: &quot;client:4242&quot;,
+    &quot;at&quot;: &quot;2026-11-16T15:45:00.876096+00:00&quot;
+  },
+  {
+    &quot;actor&quot;: 202,
+    &quot;action&quot;: &quot;save&quot;,
+    &quot;target&quot;: &quot;group:Интересуются программированием&quot;,
+    &quot;at&quot;: &quot;2026-11-16T15:45:00.875218+00:00&quot;
+  },
+  {
+    &quot;actor&quot;: 101,
+    &quot;action&quot;: &quot;save&quot;,
+    &quot;target&quot;: &quot;global:global&quot;,
+    &quot;at&quot;: &quot;2026-11-16T15:45:00.874460+00:00&quot;
+  }
+]</pre></section></html>

@@ -36,7 +36,8 @@ def test_injection_stays_out_of_instructions():
     assert poison not in prompt
     assert poison in inputs[0]['content'] and inputs[-1]['content']==poison
     assert all(x['role']=='user' for x in inputs)
-    assert prompt.index('ПРИОРИТЕТЫ') < prompt.index('ФАКТЫ ШКОЛЫ:') < prompt.index('МАНЕРА РЕЧИ') < prompt.index('ТЕКУЩЕЕ СОСТОЯНИЕ:')
+    assert prompt.index('ПРИОРИТЕТЫ') < prompt.index('ФАКТЫ ШКОЛЫ:') < prompt.index('МАНЕРА РЕЧИ')
+    assert 'dialogue_context' in inputs[1]['content']
 
 
 def test_settings_cannot_override_conflict():
@@ -136,5 +137,6 @@ def test_learning_never_injects_sales_into_information(text):
 
 
 def test_learning_available_for_actual_selection():
-    prompt,_,_=build_prompt([{'role':'user','content':'Посоветуйте, что выбрать'}],facts={},orders='',slots=[],offer='',learning_note='OPTIONAL_ADVICE',settings=BehaviorSettings())
-    assert 'OPTIONAL_ADVICE' in prompt
+    prompt,inputs,_=build_prompt([{'role':'user','content':'Посоветуйте, что выбрать'}],facts={},orders='',slots=[],offer='',learning_note='OPTIONAL_ADVICE',settings=BehaviorSettings())
+    assert 'OPTIONAL_ADVICE' not in prompt
+    assert any('OPTIONAL_ADVICE' in item['content'] for item in inputs)

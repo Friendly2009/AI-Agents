@@ -9,6 +9,9 @@ def safe_mode():
 
 
 async def send_once(store, key, uid, send, safe=safe_mode):
+    config = store.configuration().resolve(uid)['values']
+    if config['mode'] == 'paused' or not config['outbound_allowed']:
+        return False
     if safe() or store.outbound_blocked() or (store.get(uid) or {}).get('stopped'):
         return False
     if not store.claim_effect(key):

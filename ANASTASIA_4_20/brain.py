@@ -33,15 +33,23 @@ SCHEMA['properties'].update({
 SCHEMA['required'] += ['consultation_notes','next_action','trial_decision']
 
 
-async def respond(history: list[dict], campaign: dict | None = None, learning_note: str = "", manager=None, client_context=None, settings=None):
+async def respond(history: list[dict], campaign: dict | None = None, learning_note: str = "", manager=None, client_context=None, settings=None, configuration=None):
     manager = manager if manager is not None else M
     model = os.getenv("OPENAI_MODEL", "gpt-5-mini")
+    if configuration is None:
+        from storage import Store
+        store = Store()
+        try:
+            configuration = store.configuration().resolve()
+        finally:
+            store.db.close()
+    model = configuration['values']['model']
     # Use only the owner-approved active offer; do not invent event details.
     campaign = campaign or {}
     instructions, inputs, state = build_prompt(
         history, facts=knowledge(), orders=public_context(), slots=manager.slots(),
         offer=offer_context(), campaign=campaign, client_context=client_context,
-        learning_note=learning_note, settings=settings)
+        learning_note=learning_note, settings=settings, configuration=configuration)
     client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"], timeout=30)
     try:
         response = await client.responses.create(

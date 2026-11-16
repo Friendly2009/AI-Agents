@@ -64,6 +64,13 @@ class Store:
             self.db.execute("ALTER TABLE contacts ADD COLUMN ai_notice_shown INTEGER NOT NULL DEFAULT 0")
         self.db.commit()
 
+        from agent_config import Configuration
+        Configuration.migrate(self.db)
+
+    def configuration(self):
+        from agent_config import Configuration
+        return Configuration(self)
+
     def get(self, user_id: int):
         r = self.db.execute("SELECT * FROM contacts WHERE user_id=?", (user_id,)).fetchone()
         return dict(r) if r else None
@@ -181,6 +188,9 @@ class Store:
 
     def erase(self, user_id: int):
         self.ensure(user_id)
+        self.db.execute("DELETE FROM agent_config WHERE scope='client' AND target=?", (str(user_id),))
+        self.db.execute("DELETE FROM agent_config_history WHERE scope='client' AND target=?", (str(user_id),))
+        self.db.execute("UPDATE panel_audit SET target='[deleted]' WHERE target IN (?,?)", (str(user_id), 'client:' + str(user_id)))
         self.db.execute("DELETE FROM turns WHERE user_id=?", (user_id,))
         self.db.execute("DELETE FROM dialogue_state WHERE user_id=?", (user_id,))
         self.db.execute("DELETE FROM inbox WHERE user_id=?", (user_id,))

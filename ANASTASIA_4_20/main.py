@@ -337,6 +337,8 @@ async def _handle_dm(client, event):
             return
         if not testing and await manager_commands(client,event,STORE):
             return
+        if not testing and STORE.configuration().resolve(user_id)['values']['mode'] == 'paused':
+            return
         if M.paused(user_id):
             STORE.add_turn(user_id, 'user', text)
             reply = 'Ваш вопрос ожидает ответа менеджера. Чтобы продолжить со мной, напишите «продолжим».'
@@ -433,9 +435,11 @@ async def _handle_dm(client, event):
                 learning_bucket = LEARNING.bucket(text, contact)
                 learning_selection = (learning_bucket, LEARNING.choose(learning_bucket))
                 learning_note = LEARNING.prompt_hint(text, contact, history_for_ai, selection=learning_selection) if not testing else ''
-                parsed = await asyncio.wait_for(respond(history_for_ai, campaign=load_active(), learning_note=learning_note, manager=M, client_context=known_context(contact, dialogue)),timeout=45)
+                parsed = await asyncio.wait_for(respond(history_for_ai, campaign=load_active(), learning_note=learning_note, manager=M, client_context=known_context(contact, dialogue), configuration=globals()['STORE'].configuration().resolve(user_id)),timeout=45)
         except Exception as exc:
             LOG.error('Ошибка API GPT: %s', type(exc).__name__)
+            if not testing and STORE.configuration().resolve(user_id)['values']['mode'] == 'paused':
+                return
             reply = await transfer_to_managers(client, notice_owner, M, user_id, contact, 'Не удалось подготовить ответ: ' + text, STORE.history(user_id), testing, store=STORE)
             await event.reply(reply)
             STORE.add_turn(user_id, 'assistant', reply)
@@ -453,7 +457,7 @@ async def _handle_dm(client, event):
                 and ready_for_recording(STORE.get(user_id))):
             parsed['next_action'] = 'recording'
         # Model suggestions never write permanent facts or grant consent.
-        if M.paused(user_id) or (STORE.get(user_id) or {}).get('stopped'):
+        if M.paused(user_id) or (STORE.get(user_id) or {}).get('stopped') or (not testing and STORE.configuration().resolve(user_id)['values']['mode'] == 'paused'):
             return  # A manager took over while the model was running.
         if parsed.get('handoff'):
             reply = await transfer_to_managers(client, notice_owner, M, user_id, STORE.get(user_id), text, STORE.history(user_id), testing, store=STORE)
@@ -555,6 +559,12 @@ async def listen(client):
         """All earlier commands are also available to either approved personal admin ID."""
         message = (event.raw_text or '').strip()
         low = message.lower().strip(' !?.')
+        if low == '/панель':
+            from agent_config import require_admin
+            require_admin(event.sender_id)
+            code = STORE.configuration().issue_login(event.sender_id)
+            await event.reply('Панель на компьютере агента: http://127.0.0.1:8765\nОдноразовый код на 5 минут:\n' + code)
+            return
         if low in {'ты тут', 'ты работаешь', 'проверь, работаешь ли ты', '/статус'}:
             await event.reply('На связи 🙂 Режим: ' + ('SAFE TEST' if safe_test_mode() else 'рабочий') + '. Для разговора как клиент: /диалог_тест. Управление: /помощь.')
             return
