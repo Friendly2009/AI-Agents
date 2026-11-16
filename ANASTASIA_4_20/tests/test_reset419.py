@@ -18,6 +18,7 @@ class ResetTests(unittest.TestCase):
             self.assertEqual(s.get(1)['crm_id'],7);self.assertIsNone(s.get(1)['child_age'])
             self.assertEqual(s.get(2)['stopped'],1)
             self.assertEqual(reset(d)[0],0)
+            s.db.close()
     def test_learning_records_selected_strategy(self):
         l=SalesLearning(':memory:')
         n=l.record(1,'Игры',{'trial_decision':'yes'},'ok',selection=('open','choice_light'))

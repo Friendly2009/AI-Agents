@@ -1,6 +1,7 @@
 """Offline reset of previously contacted recipients. Never sends Telegram messages."""
 from pathlib import Path
 import sqlite3
+from contextlib import closing
 from datetime import datetime
 from storage import Store
 
@@ -19,7 +20,7 @@ def reset(base):
         backup.mkdir(parents=True)
         for src in data.glob('*.db'):
             if src.name=='running.lock.db':continue
-            with sqlite3.connect(src) as origin, sqlite3.connect(backup/src.name) as dest:
+            with closing(sqlite3.connect(src)) as origin, closing(sqlite3.connect(backup/src.name)) as dest:
                 origin.backup(dest)
         store=Store(str(data/'softskills.db'));db=store.db
         db.execute('CREATE TEMP TABLE reset_ids AS SELECT user_id FROM contacts WHERE stopped=0 AND (initial_sent=1 OR user_id IN (SELECT user_id FROM sends))')
@@ -30,6 +31,8 @@ def reset(base):
             db.execute('INSERT INTO send_audit SELECT * FROM sends WHERE user_id IN (SELECT user_id FROM reset_ids)')
             db.execute('DELETE FROM sends WHERE user_id IN (SELECT user_id FROM reset_ids)')
             db.execute('DELETE FROM turns WHERE user_id IN (SELECT user_id FROM reset_ids)')
+            db.execute('DELETE FROM dialogue_state WHERE user_id IN (SELECT user_id FROM reset_ids)')
+            db.execute('DELETE FROM inbox WHERE user_id IN (SELECT user_id FROM reset_ids)')
             db.execute('''UPDATE contacts SET city='', ai_consent=0,crm_consent=0,initial_sent=0,name=NULL,phone=NULL,course=NULL,child_age=NULL,wanted_time=NULL,wants_trial=0,pending_notified=0,consultation_notes=NULL,submission_pending=0,ai_notice_shown=0 WHERE user_id IN (SELECT user_id FROM reset_ids)''')
             if (data/'manager.db').exists():
                 db.execute('DELETE FROM ops.handoffs WHERE uid IN (SELECT user_id FROM reset_ids)')

@@ -50,6 +50,7 @@ LOG = logging.getLogger('softskills')
 STORE = Store()
 RADAR = FamilyRadar()
 BASE = Path(__file__).resolve().parent
+from dialogue_state import guard_model, safe_reply, question_expired
 from conversation_logic import should_ask_recording, RECORDING_QUESTION, recording_decision, ready_for_recording, known_context, recording_refused
 
 CHAT_LOCKS = {}
@@ -219,19 +220,35 @@ async def maybe_crm(client, user_id):
                 crm_id = await create_lead(contact)
                 if crm_id is None:
                     raise RuntimeError('CRM configuration changed during submission')
-                STORE.update(user_id, crm_id=crm_id)
-                STORE.finish_effect(crm_key, 'sent')
+                STORE.submitted(user_id, crm_id, crm_key)
                 status = 'карточка #' + str(crm_id)
             except (Exception, asyncio.CancelledError) as exc:
                 STORE.finish_effect(crm_key, 'uncertain')
+                STORE.set_dialogue(user_id, application_status='uncertain')
                 LOG.error('AlfaCRM: %s; результат требует сверки', type(exc).__name__)
                 if isinstance(exc, asyncio.CancelledError):
                     raise
                 status = 'результат неизвестен; нужна ручная сверка, автоповтор отключён'
+            else:
+                try:
+                    LEARNING.mark_user(user_id, 'lead')
+                except Exception:
+                    LOG.exception('Карточка CRM подтверждена, но статистика не обновилась')
     await deliver_lead(client, STORE, contact, director_admin_ids(0), status)
+    return {'crm_id': (STORE.get(user_id) or {}).get('crm_id'), 'status': status}
 
 
 async def handle_dm(client, event):
+    store = TEST_SESSIONS[event.sender_id][0] if event.sender_id in TESTERS else STORE
+    try:
+        await _handle_dm(client, event)
+        store.complete_inbound(event.sender_id, event.id)
+    finally:
+        if store._inbound.get(event.sender_id) == event.id:
+            store._inbound.pop(event.sender_id, None)
+
+
+async def _handle_dm(client, event):
     user_id = event.sender_id
     testing = user_id in TESTERS
     STORE, M = TEST_SESSIONS[user_id] if testing else (globals()['STORE'], globals()['M'])
@@ -246,7 +263,7 @@ async def handle_dm(client, event):
         return
     lock = CHAT_LOCKS.setdefault(user_id, asyncio.Lock())
     async with lock:
-        if not M.claim(user_id,event.id):
+        if not STORE.claim_inbound(user_id, event.id, text):
             return
         STORE.ensure(user_id, username=getattr(sender, 'username', '') or '', source='Входящий Telegram')
         contact = STORE.get(user_id)
@@ -255,6 +272,7 @@ async def handle_dm(client, event):
             return
         if text.lower() == '/продолжить':
             STORE.update(user_id, stopped=0)
+            STORE.set_dialogue(user_id, stage='engaged', paused=False, declined=False, handoff_status='none')
             M.handoff(user_id, False)
             await event.reply('Я на связи 🙂 Что хотели бы узнать?')
             return
@@ -273,6 +291,7 @@ async def handle_dm(client, event):
                 RADAR.stop(user_id)
                 LEARNING.mark_user(user_id, 'lost')
             STORE.erase(user_id)
+            STORE.set_dialogue(user_id, stage='declined', declined=True)
             M.erase(user_id)
             await event.reply('Общение и приглашения остановлены. Удалить регистрационные данные: /удалить.')
             return
@@ -309,11 +328,12 @@ async def handle_dm(client, event):
             return
         if contact['stopped']:
             return
-        if requests_handoff(text, STORE.history(user_id)):
-            reply = await transfer_to_managers(client, notice_owner, M, user_id, contact, text, STORE.history(user_id), testing)
+        if requests_handoff(text, [] if question_expired(STORE.dialogue(user_id)) else STORE.history(user_id)):
+            reply = await transfer_to_managers(client, notice_owner, M, user_id, contact, text, STORE.history(user_id), testing, store=STORE)
+            STORE.set_dialogue(user_id, stage='manager_handoff' if M.paused(user_id) else 'consultation', handoff_status='delivered' if M.paused(user_id) else 'failed')
             STORE.add_turn(user_id, 'user', text)
-            STORE.add_turn(user_id, 'assistant', reply)
             await event.reply(reply)
+            STORE.add_turn(user_id, 'assistant', reply)
             return
         if not testing and await manager_commands(client,event,STORE):
             return
@@ -323,8 +343,8 @@ async def handle_dm(client, event):
             if text.lower().strip('.! ') == 'продолжим':
                 M.handoff(user_id, False)
                 reply = 'Продолжим. Что хотите уточнить?'
-            STORE.add_turn(user_id, 'assistant', reply)
             await event.reply(reply)
+            STORE.add_turn(user_id, 'assistant', reply)
             return
         if not testing:
             LEARNING.mark_engaged(user_id, text)
@@ -334,15 +354,23 @@ async def handle_dm(client, event):
             if asked and is_yes(text):
                 STORE.update(user_id, ai_consent=1, ai_notice_shown=1)
                 STORE.add_turn(user_id, 'user', text)
-                reply = 'Спасибо. Какой вопрос о занятиях хотите обсудить?'
-                STORE.add_turn(user_id, 'assistant', reply)
-                await event.reply(reply)
+                pending = next((m['content'] for m in reversed(prior) if m['role'] == 'user'), '')
+                if pending and not is_greeting(pending):
+                    text = pending
+                    contact = STORE.get(user_id)
+                else:
+                    reply = 'Спасибо. Какой вопрос о занятиях хотите обсудить?'
+                    await event.reply(reply)
+                    STORE.add_turn(user_id, 'assistant', reply)
+                    return
             elif is_ai_decline(text):
                 await event.reply('Можно продолжить с менеджером Soft Skills: напишите /менеджер.')
+                return
             else:
-                STORE.add_turn(user_id, 'assistant', PERMISSION)
+                STORE.add_turn(user_id, 'user', text)
                 await event.reply(PERMISSION)
-            return
+                STORE.add_turn(user_id, 'assistant', PERMISSION)
+                return
         if not contact.get('ai_notice_shown'):
             if is_ai_decline(text):
                 await event.reply('Можно продолжить с менеджером Soft Skills: напишите /менеджер.')
@@ -363,27 +391,33 @@ async def handle_dm(client, event):
                 text = '\n'.join(pending + [text])
 
 
-        decision = recording_decision(STORE.history(user_id), text)
+        decision = recording_decision([] if question_expired(STORE.dialogue(user_id)) else STORE.history(user_id), text)
+        dialogue = STORE.observe(user_id, text)
+        contact = STORE.get(user_id)
+        if decision is True and not ready_for_recording(contact):
+            decision = None
         if decision is not None:
-            STORE.update(user_id, crm_consent=int(decision), submission_pending=int(decision))
+            STORE.recording_consent(user_id, decision)
             STORE.add_turn(user_id, 'user', text)
             reply = ('Спасибо! Данные для заявки сохранены. Дату и время занятия ещё нужно подтвердить.'
                      if decision else 'Хорошо, заявку в систему записи не передаю. Можем продолжить консультацию здесь.')
             if (safe_test_mode() or testing) and decision:
                 reply = 'Тест: согласие сохранено, реальная заявка не отправлялась. Дата и время занятия не подтверждены.'
-            STORE.add_turn(user_id, 'assistant', reply)
             await event.reply(reply)
+            STORE.add_turn(user_id, 'assistant', reply)
             if decision:
-                await maybe_crm(client, user_id)
-                if not testing:
-                    LEARNING.mark_user(user_id, 'lead')
+                result = await maybe_crm(client, user_id)
+                if result and result.get('crm_id'):
+                    receipt = f"В CRM подтверждена карточка обращения #{result['crm_id']}. Дата и время занятия ещё не подтверждены."
+                    await event.reply(receipt)
+                    STORE.add_turn(user_id, 'assistant', receipt)
             return
 
         if is_greeting(text) and not STORE.history(user_id):
             reply = 'Привет! Что хотели бы узнать о занятиях?'
             STORE.add_turn(user_id, 'user', text)
-            STORE.add_turn(user_id, 'assistant', reply)
             await event.reply(reply)
+            STORE.add_turn(user_id, 'assistant', reply)
             return
         preferences = read_preferences(contact.get('speech_preferences'))
         preferences.update(preference_updates(text))
@@ -399,12 +433,12 @@ async def handle_dm(client, event):
                 learning_bucket = LEARNING.bucket(text, contact)
                 learning_selection = (learning_bucket, LEARNING.choose(learning_bucket))
                 learning_note = LEARNING.prompt_hint(text, contact, history_for_ai, selection=learning_selection) if not testing else ''
-                parsed = await asyncio.wait_for(respond(history_for_ai, campaign=load_active(), learning_note=learning_note, manager=M, client_context=known_context(contact)),timeout=45)
+                parsed = await asyncio.wait_for(respond(history_for_ai, campaign=load_active(), learning_note=learning_note, manager=M, client_context=known_context(contact, dialogue)),timeout=45)
         except Exception as exc:
             LOG.error('Ошибка API GPT: %s', type(exc).__name__)
-            reply = await transfer_to_managers(client, notice_owner, M, user_id, contact, 'Не удалось подготовить ответ: ' + text, STORE.history(user_id), testing)
-            STORE.add_turn(user_id, 'assistant', reply)
+            reply = await transfer_to_managers(client, notice_owner, M, user_id, contact, 'Не удалось подготовить ответ: ' + text, STORE.history(user_id), testing, store=STORE)
             await event.reply(reply)
+            STORE.add_turn(user_id, 'assistant', reply)
             return
         parsed = guard_sales_action(parsed, text)
         state = turn_state(history_for_ai, preferences=contact.get('speech_preferences'))
@@ -413,41 +447,20 @@ async def handle_dm(client, event):
             parsed['trial_decision'] = 'no' if state['mood'] == 'ending' else None
             if not parsed.get('handoff'):
                 parsed['next_action'] = 'pause' if state['mood'] == 'ending' else 'answer'
-        updates = {}
-        for key in ('city', 'course', 'parent_name', 'phone', 'child_age', 'wanted_time'):
-            val = parsed.get(key)
-            dest = 'name' if key == 'parent_name' else key
-            if val is None or val == '':
-                continue
-            if key == 'city' and val not in {'Александров', 'Ярославль'}:
-                continue
-            if key == 'phone':
-                digits = ''.join(x for x in str(val) if x.isdigit())
-                if len(digits) != 11 or digits[0] not in {'7','8'}:
-                    continue
-                val = '+7' + digits[1:]
-            if key == 'child_age':
-                if not isinstance(val, int) or not 0 < val < 19:
-                    continue
-            updates[dest] = val if key == 'child_age' else str(val)[:100]
-        if parsed.get('wants_trial') is True:
-            updates['wants_trial'] = 1
-            if not parsed.get('course') and not contact.get('course'):
-                updates['course'] = load_active().get('title', 'Заявка')[:100]
-        if parsed.get('trial_decision') in {'yes', 'no'}:
-            updates['wants_trial'] = int(parsed['trial_decision'] == 'yes')
-        if parsed.get('trial_decision') == 'yes' and not contact.get('submission_pending'):
-            updates['crm_consent'] = 0  # Legacy consent cannot authorize a new request.
-        if isinstance(parsed.get('consultation_notes'), str):
-            updates['consultation_notes'] = parsed['consultation_notes'][:1000]
-        if updates:
-            STORE.update(user_id, **updates)
+        parsed = guard_model(parsed, dialogue)
+        if (dialogue.get('request_active') and dialogue.get('intent') in {'request', 'engage'}
+                and not dialogue.get('family_ambiguous') and not dialogue.get('conflicts')
+                and ready_for_recording(STORE.get(user_id))):
+            parsed['next_action'] = 'recording'
+        # Model suggestions never write permanent facts or grant consent.
+        if M.paused(user_id) or (STORE.get(user_id) or {}).get('stopped'):
+            return  # A manager took over while the model was running.
         if parsed.get('handoff'):
-            reply = await transfer_to_managers(client, notice_owner, M, user_id, STORE.get(user_id), text, STORE.history(user_id), testing)
-            STORE.add_turn(user_id, 'assistant', reply)
+            reply = await transfer_to_managers(client, notice_owner, M, user_id, STORE.get(user_id), text, STORE.history(user_id), testing, store=STORE)
             await event.reply(reply)
+            STORE.add_turn(user_id, 'assistant', reply)
             return
-        reply = str(parsed['reply'])
+        reply = safe_reply(str(parsed['reply']), dialogue)
         current = STORE.get(user_id)
         if should_ask_recording(contact, current, parsed, STORE.history(user_id, limit=30)):
             reply = RECORDING_QUESTION

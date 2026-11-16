@@ -43,6 +43,6 @@ def test_plain_greeting():
     assert not f['is_greeting']('Привет! Хочу записаться')
 
 def test_dm_does_not_submit_after_every_reply():
-    tree=ast.parse(SOURCE.read_text());fn=next(n for n in tree.body if isinstance(n,ast.AsyncFunctionDef) and n.name=='handle_dm')
+    tree=ast.parse(SOURCE.read_text());fn=next(n for n in tree.body if isinstance(n,ast.AsyncFunctionDef) and n.name=='_handle_dm')
     calls=[n for n in ast.walk(fn) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='maybe_crm']
     assert len(calls)==1

@@ -22,7 +22,7 @@ STRATEGIES = {
 }
 
 _BUCKETS = ("gaming", "creative", "exam", "price", "objection", "open")
-_POSITIVE = {"trial_interest", "lead", "attended"}
+_POSITIVE = {"attended"}
 
 
 def _now() -> str:
@@ -116,7 +116,7 @@ class SalesLearning:
         if bucket not in _BUCKETS:
             bucket = "open"
         rows = self.db.execute(
-            "SELECT strategy, COUNT(*) attempts, SUM(outcome IN ('trial_interest','lead','attended')) positive "
+            "SELECT strategy, COUNT(*) attempts, SUM(outcome = 'attended') positive "
             "FROM interactions WHERE bucket=? GROUP BY strategy",
             (bucket,),
         ).fetchall()
@@ -194,7 +194,7 @@ class SalesLearning:
         labeled = self.db.execute("SELECT COUNT(*) FROM interactions WHERE outcome!='pending'").fetchone()[0]
         lines = [f"🧠 Обучение менеджера: {'включено' if self.enabled else 'пауза'}", f"Ответов в статистике: {total}; размечено: {labeled}"]
         rows = self.db.execute(
-            "SELECT bucket,strategy,COUNT(*) attempts,SUM(outcome IN ('trial_interest','lead','attended')) positive "
+            "SELECT bucket,strategy,COUNT(*) attempts,SUM(outcome = 'attended') positive "
             "FROM interactions WHERE outcome!='pending' GROUP BY bucket,strategy ORDER BY bucket,positive DESC,attempts DESC"
         ).fetchall()
         if not rows:
@@ -202,7 +202,7 @@ class SalesLearning:
         else:
             lines.append("Сценарии по типам диалогов:")
             for r in rows:
-                lines.append(f"• {r[0]} · {r[1]} — {r[3]}/{r[2]} положительных")
+                lines.append(f"• {r[0]} · {r[1]} — {r[3]}/{r[2]} подтверждённых посещений")
         recent = self.db.execute("SELECT id,bucket,strategy,outcome FROM interactions ORDER BY id DESC LIMIT 8").fetchall()
         if recent:
             lines.append("Последние ID для ручной разметки: " + ", ".join(f"#{r[0]} {r[1]}/{r[2]}={r[3]}" for r in recent))

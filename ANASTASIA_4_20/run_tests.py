@@ -16,7 +16,7 @@ def main():
                 shutil.copy2(item, target / item.name)
         shutil.copytree(root / 'tests', target / 'tests', ignore=shutil.ignore_patterns('__pycache__'))
         env = dict(os.environ, SAFE_TEST_MODE='true', CRM_ENABLED='false',
-                   OPENAI_API_KEY='offline-test-placeholder')
+                   OPENAI_API_KEY='offline-test-placeholder', PYTHONUTF8='1')
         return subprocess.call([sys.executable, '-m', 'pytest', '-q', *sys.argv[1:]], cwd=target, env=env)
 
 

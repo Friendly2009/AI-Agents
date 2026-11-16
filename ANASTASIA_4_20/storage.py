@@ -1,6 +1,7 @@
 """Local SQLite; purge history regularly; user deletion is supported."""
 from __future__ import annotations
 import sqlite3
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -16,7 +17,17 @@ class Store:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA busy_timeout=5000")
+        self._inbound = {}
         self.db.executescript("""
+        CREATE TABLE IF NOT EXISTS dialogue_state (
+          user_id INTEGER PRIMARY KEY, payload TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS inbox (
+          user_id INTEGER, message_id INTEGER, content TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'received', created_at TEXT NOT NULL,
+          PRIMARY KEY(user_id,message_id)
+        );
         CREATE TABLE IF NOT EXISTS effects (
           effect_key TEXT PRIMARY KEY, state TEXT NOT NULL, updated_at TEXT NOT NULL
         );
@@ -76,9 +87,81 @@ class Store:
         self.db.commit()
 
     def add_turn(self, user_id: int, role: str, content: str):
-        self.db.execute("INSERT INTO turns(user_id,role,content,created_at) VALUES(?,?,?,?)",
-                        (user_id, role, content, utc_now()))
-        self.db.commit()
+        from dialogue_state import after_reply
+        with self.db:
+            self.db.execute("INSERT INTO turns(user_id,role,content,created_at) VALUES(?,?,?,?)",
+                            (user_id, role, content, utc_now()))
+            if role == 'assistant':
+                self._save_dialogue(user_id, after_reply(self.dialogue(user_id), content))
+                if user_id in self._inbound:
+                    self.db.execute("UPDATE inbox SET status='answered' WHERE user_id=? AND message_id=?",
+                                    (user_id, self._inbound[user_id]))
+
+    def dialogue(self, user_id):
+        from dialogue_state import initial_state
+        row = self.db.execute('SELECT payload FROM dialogue_state WHERE user_id=?', (user_id,)).fetchone()
+        return dict(initial_state(), **json.loads(row[0])) if row else initial_state()
+
+    def _save_dialogue(self, user_id, state):
+        self.db.execute('INSERT OR REPLACE INTO dialogue_state VALUES(?,?)',
+                        (user_id, json.dumps(state, ensure_ascii=False)))
+
+    def set_dialogue(self, user_id, **fields):
+        from dialogue_state import STAGES
+        state = self.dialogue(user_id)
+        if not set(fields) <= set(state) or ('stage' in fields and fields['stage'] not in STAGES):
+            raise ValueError('Invalid dialogue state')
+        state.update(fields)
+        with self.db:
+            self._save_dialogue(user_id, state)
+
+    def claim_inbound(self, user_id, message_id, text):
+        # Retain interrupted events for operator recovery; never blindly replay external effects.
+        with self.db:
+            inserted = self.db.execute('INSERT OR IGNORE INTO inbox(user_id,message_id,content,created_at) VALUES(?,?,?,?)',
+                                       (user_id, message_id, text, utc_now())).rowcount
+        if inserted:
+            self._inbound[user_id] = message_id
+        return bool(inserted)
+
+    def observe(self, user_id, text):
+        from dialogue_state import reduce_user
+        # Facts, evidence and state commit together, before any model/network call.
+        with self.db:
+            state, updates = reduce_user(self.dialogue(user_id), text, self.get(user_id) or {})
+            if updates:
+                fields = dict(updates, updated_at=utc_now())
+                self.db.execute('UPDATE contacts SET ' + ','.join(k+'=?' for k in fields) + ' WHERE user_id=?',
+                                (*fields.values(), user_id))
+            self._save_dialogue(user_id, state)
+        return state
+
+    def pending_inbound(self):
+        return [dict(r) for r in self.db.execute("SELECT * FROM inbox WHERE status='received' ORDER BY created_at")]
+
+    def complete_inbound(self, user_id, message_id):
+        if self._inbound.get(user_id) == message_id:
+            with self.db:
+                self.db.execute("UPDATE inbox SET status='handled' WHERE user_id=? AND message_id=? AND status='received'",
+                                (user_id, message_id))
+
+    def recording_consent(self, user_id, decision):
+        with self.db:
+            self.db.execute('UPDATE contacts SET crm_consent=?,submission_pending=?,updated_at=? WHERE user_id=?',
+                            (int(decision), int(decision), utc_now(), user_id))
+            state = self.dialogue(user_id)
+            state.update(application_status='pending' if decision else 'consent_refused',
+                         expected_action='submit' if decision else None)
+            self._save_dialogue(user_id, state)
+
+    def submitted(self, user_id, crm_id, effect_key):
+        with self.db:
+            self.db.execute('UPDATE contacts SET crm_id=?,submission_pending=0,updated_at=? WHERE user_id=?',
+                            (crm_id, utc_now(), user_id))
+            self.db.execute("UPDATE effects SET state='sent',updated_at=? WHERE effect_key=?", (utc_now(), effect_key))
+            state = self.dialogue(user_id)
+            state.update(stage='lead_submitted', application_status='submitted')
+            self._save_dialogue(user_id, state)
 
     def history(self, user_id: int, limit: int = 12) -> list[dict]:
         rows = self.db.execute("SELECT role,content FROM (SELECT id,role,content FROM turns WHERE user_id=? ORDER BY id DESC LIMIT ?) ORDER BY id",
@@ -99,6 +182,8 @@ class Store:
     def erase(self, user_id: int):
         self.ensure(user_id)
         self.db.execute("DELETE FROM turns WHERE user_id=?", (user_id,))
+        self.db.execute("DELETE FROM dialogue_state WHERE user_id=?", (user_id,))
+        self.db.execute("DELETE FROM inbox WHERE user_id=?", (user_id,))
         # Retain minimal suppression record to prevent unwanted re-contact.
         self.db.execute("UPDATE contacts SET speech_preferences=NULL,consultation_notes=NULL,username=NULL,city=NULL,source=NULL,ai_consent=0,crm_consent=0,stopped=1,submission_pending=0,name=NULL,phone=NULL,course=NULL,child_age=NULL,wanted_time=NULL,wants_trial=0,pending_notified=0,updated_at=? WHERE user_id=?",
                         (utc_now(), user_id))
@@ -107,6 +192,8 @@ class Store:
     def purge_old_turns(self, days: int = 30):
         before = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         self.db.execute("DELETE FROM turns WHERE created_at<?", (before,))
+        # Keep deduplication keys, but expire raw text after the conversation retention period.
+        self.db.execute("UPDATE inbox SET content='' WHERE created_at<? AND status IN ('answered','handled')", (before,))
         self.db.commit()
 
     def list_ready(self):

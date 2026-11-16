@@ -9,7 +9,7 @@ from prompt_builder import build_prompt
 from storage import Store
 from brain import respond, SCHEMA
 
-CASES = json.loads((Path(__file__).parent / 'dialogue_cases.json').read_text())
+CASES = json.loads((Path(__file__).parent / 'dialogue_cases.json').read_text(encoding='utf-8'))
 
 @pytest.mark.parametrize('case', CASES, ids=lambda c:c['id'])
 def test_dialogue_signals(case):

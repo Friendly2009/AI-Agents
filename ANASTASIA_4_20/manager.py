@@ -50,7 +50,11 @@ class Manager:
         if not r:raise ValueError('Бронь не найдена')
         return dict(r)
     def set_booking(self,bid,status,uid=None):
+        if status not in {'pending','confirmed','cancelled','attended'}:
+            raise ValueError('Недопустимый статус')
         b=self.booking(bid)
+        if status == 'attended' and b['status'] != 'confirmed':
+            raise ValueError('Сначала подтвердите занятие')
         if uid is not None and b['uid']!=uid:raise ValueError('Это не ваша бронь')
         if b['status']=='cancelled' and status!='cancelled':raise ValueError('Создайте новую бронь')
         with self.db:self.db.execute('UPDATE bookings SET status=? WHERE id=?',(status,bid))
@@ -88,7 +92,7 @@ async def commands(client,event,store,admin=False):
     text=(event.raw_text or '').strip();uid=event.sender_id
     if not text.startswith('/'):return False
     command,*rest=text.split(maxsplit=1); arg=rest[0] if rest else ''
-    admin_cmds={'/отчёт','/слот','/изменить_слот','/закрыть_слот','/подтвердить_бронь','/отменить_бронь','/вернуть_ии','/брони','/менеджер_помощь'}
+    admin_cmds={'/отчёт','/слот','/изменить_слот','/закрыть_слот','/подтвердить_бронь','/посещение','/отменить_бронь','/вернуть_ии','/брони','/менеджер_помощь'}
     if command in admin_cmds and not admin:return False
     try:
         if command=='/менеджер_помощь':
@@ -131,17 +135,25 @@ async def commands(client,event,store,admin=False):
             store.ensure(uid);store.update(uid,crm_consent=1);answer='Согласие на обработку данных для записи и передачу заявки в CRM Soft Skills сохранено.'
         elif command=='/отмена':M.set_booking(int(arg),'cancelled',uid);answer='Бронь отменена, место освобождено.'
         elif command=='/напомнить':M.remind(int(arg),uid);answer='Отправим одно напоминание в течение суток перед подтверждённым занятием. Отмена уведомлений: /стоп.'
-        elif command in {'/подтвердить_бронь','/отменить_бронь'}:
-            status='confirmed' if command=='/подтвердить_бронь' else 'cancelled'
+        elif command in {'/подтвердить_бронь','/отменить_бронь','/посещение'}:
+            status={'/подтвердить_бронь':'confirmed','/отменить_бронь':'cancelled','/посещение':'attended'}[command]
             if safe_mode():
                 await event.reply('SAFE TEST: изменение реальной брони и уведомление отключены.')
                 return True
             M.set_booking(int(arg),status);b=M.booking(int(arg))
+            store.ensure(b['uid'])
+            store.set_dialogue(b['uid'], stage={'confirmed':'visit_confirmed','cancelled':'declined','attended':'attended'}[status], application_status=status)
+            if status == 'attended':
+                from sales_learning import LEARNING
+                LEARNING.mark_user(b['uid'], 'attended')
             await send_once(store, f"booking:{b['id']}:{status}", b['uid'],
-                lambda: client.send_message(b['uid'],f"Бронь #{arg}: {'подтверждена менеджером' if status=='confirmed' else 'отменена менеджером'}. {b['course']}",parse_mode=None))
+                lambda: client.send_message(b['uid'],f"Бронь #{arg}: { {'confirmed':'подтверждена менеджером','cancelled':'отменена менеджером','attended':'посещение подтверждено сотрудником'}[status] }. {b['course']}",parse_mode=None))
             answer='Статус обновлён локально. Это не запись занятия в AlfaCRM.'
         elif command=='/брони':answer='\n'.join(str(dict(r)) for r in M.db.execute('SELECT * FROM bookings ORDER BY id DESC LIMIT 25')) or 'Броней нет'
-        elif command=='/вернуть_ии':M.handoff(int(arg),False);answer='Автоответы для этого клиента возобновлены.'
+        elif command=='/вернуть_ии':
+            M.handoff(int(arg),False)
+            store.set_dialogue(int(arg), stage='engaged', handoff_status='none')
+            answer='Автоответы для этого клиента возобновлены.'
         else:return False
         await event.reply(answer[:3900]);return True
     except (ValueError,TypeError):
