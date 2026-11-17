@@ -1,4 +1,0 @@
-Начните с SALES_ANALYTICS_4_25.md.
-Не заменяйте свои data, .env и Telegram-сессию.
-Это исходники; рабочий экземпляр не обновлялся автоматически.
-Тесты: TEST_RESULTS_4_25.txt и TEST_RESULTS_4_25.xml.
