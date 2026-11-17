@@ -50,10 +50,13 @@ class Ledger:
 
     def check(self, uid, kind, operation=None):
         if self.store.outbound_blocked(): return 'account_restricted'
-        if (self.store.get(uid) or {}).get('stopped'): return 'recipient_declined'
+        privacy_ack = kind == 'privacy_ack' and self.store.control.permits_privacy_ack(operation)
+        if kind == 'privacy_ack' and not privacy_ack: return 'invalid_privacy_ack'
+        if (self.store.get(uid) or {}).get('stopped') and not privacy_ack: return 'recipient_declined'
         if kind == 'admin': return ''
         config = self.store.configuration().resolve(uid)['values']
         if config['mode']=='paused' or not config['outbound_allowed']: return 'configuration_paused'
+        if privacy_ack: return ''
         state = self.store.dialogue(uid)
         if kind == 'handoff_ack':
             if not self.store.control.permits_ack(operation): return 'invalid_handoff_ack'
@@ -205,7 +208,7 @@ class GuardedTelegramClient(TelegramClient):
         if current and current[0]==uid and current[2] is self.delivery.store:
             operation = self.delivery.row(current[1])
             why = self.delivery.check(uid, operation['kind'], operation)
-            if operation['kind'] == 'handoff_ack' and str(message) != operation['body']:
+            if operation['kind'] in {'handoff_ack', 'privacy_ack'} and str(message) != operation['body']:
                 why = 'invalid_handoff_ack'
             if why:
                 raise PolicyBlocked(why)

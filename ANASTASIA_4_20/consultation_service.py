@@ -14,6 +14,7 @@ from dialogue_state import guard_model, safe_reply, question_expired
 from conversation_logic import should_ask_recording, RECORDING_QUESTION, recording_decision, ready_for_recording, known_context
 from app_settings import PERMISSION, is_greeting, safe_test_mode
 from conversation_service import ConversationState
+from handoff_ack import confirm_privacy
 
 LOG = logging.getLogger('softskills')
 
@@ -51,22 +52,26 @@ async def _handle_dm(app, client, event):
             if not testing:
                 app.RADAR.remove(user_id)
                 app.LEARNING.erase(user_id)
-            STORE.erase(user_id)
+            STORE.erase(user_id, receipt=f'privacy:{user_id}:delete:{event.id}')
             M.erase(user_id)
-            await event.reply('Удалены регистрация семьи и история локальной переписки. Оставлен только технический запрет на повторное обращение. Если данные ранее передавались в AlfaCRM, для удаления оттуда обратитесь к Soft Skills.')
+            await confirm_privacy(STORE, user_id, event.id, 'delete', event.reply, safe=safe_test_mode())
             return
         if text.lower() in {'/стоп', '/stop'} or is_stop(text):
             app.PENDING_QUESTIONS.pop(user_id, None)
             if not testing:
                 app.RADAR.stop(user_id)
                 app.LEARNING.mark_user(user_id, 'lost')
-            STORE.erase(user_id)
+            STORE.erase(user_id, receipt=f'privacy:{user_id}:stop:{event.id}')
             from funnel import Funnel
             with STORE.db:
                 Funnel(STORE).emit(user_id,'client_declined',reliability='intent',confirmation='explicit_stop',details={'reason':'refusal'})
             STORE.set_dialogue(user_id, stage='declined', declined=True)
             M.erase(user_id)
-            await event.reply('Общение и приглашения остановлены. Удалить регистрационные данные: /удалить.')
+            await confirm_privacy(STORE, user_id, event.id, 'stop', event.reply, safe=safe_test_mode())
+            return
+        # Ownership applies before family/booking commands can mutate or answer.
+        # Explicit repeated handoff requests may recover an unsent receipt below.
+        if STORE.control.blocked(user_id) and not requests_handoff(text, STORE.history(user_id)):
             return
         if text.lower() == '/возобновить_семью':
             if os.getenv('FAMILY_RADAR_ENABLED','false').lower() != 'true':
@@ -205,7 +210,8 @@ async def _handle_dm(app, client, event):
                 learning_note = app.LEARNING.prompt_hint(text, contact, history_for_ai, selection=learning_selection) if not testing else ''
                 parsed = await asyncio.wait_for(app.respond(history_for_ai, campaign=app.load_active(), learning_note=learning_note, manager=M, client_context=known_context(contact, dialogue), configuration=app.STORE.configuration().resolve(user_id)),timeout=45)
         except Exception as exc:
-            if STORE.control.get(user_id)['revision'] != ownership_revision:
+            if (STORE.control.get(user_id)['revision'] != ownership_revision
+                    or M.paused(user_id) or (STORE.get(user_id) or {}).get('stopped')):
                 return
             from funnel import Funnel
             Funnel(STORE).metric('llm_error')

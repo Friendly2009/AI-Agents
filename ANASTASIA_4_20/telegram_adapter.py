@@ -81,10 +81,11 @@ async def director_message(app, client, event, owner_id):
                 with TemporaryDirectory() as td:
                     target=await event.message.download_media(file=td + '/order.ogg')
                     if not target: raise ValueError('Не удалось скачать голосовое сообщение')
-                    with open(target,'rb') as media:
-                        transcript=await AsyncOpenAI(api_key=os.environ['OPENAI_API_KEY'],timeout=60).audio.transcriptions.create(
-                            model=os.getenv('VOICE_TRANSCRIPTION_MODEL','whisper-1'), file=media,
-                            language='ru')
+                    async with AsyncOpenAI(api_key=os.environ['OPENAI_API_KEY'],timeout=60) as speech_client:
+                        with open(target,'rb') as media:
+                            transcript=await speech_client.audio.transcriptions.create(
+                                model=os.getenv('VOICE_TRANSCRIPTION_MODEL','whisper-1'), file=media,
+                                language='ru')
                 source=(transcript.text or '').strip()
                 if not source: raise ValueError('Не удалось распознать текст распоряжения')
             else:

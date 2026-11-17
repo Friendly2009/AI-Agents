@@ -182,8 +182,12 @@ class Store:
     def sent_today(self) -> int:
         return self.db.execute("SELECT COUNT(*) FROM (SELECT user_id,sent_at FROM sends UNION SELECT user_id,sent_at FROM send_audit) WHERE substr(sent_at,1,10)=?", (utc_now()[:10],)).fetchone()[0]
 
-    def erase(self, user_id: int):
+    def erase(self, user_id: int, *, receipt=None):
         self.ensure(user_id)
+        with self.transaction():
+            self._erase(user_id, receipt)
+
+    def _erase(self, user_id, receipt):
         self.db.execute('DELETE FROM funnel_events WHERE client_id=?',(user_id,))
         if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='lead_notices'").fetchone():
             self.db.execute('DELETE FROM lead_notices WHERE uid=?',(user_id,))
@@ -192,14 +196,17 @@ class Store:
         self.db.execute("UPDATE panel_audit SET target='[deleted]' WHERE target IN (?,?)", (str(user_id), 'client:' + str(user_id)))
         self.db.execute("DELETE FROM turns WHERE user_id=?", (user_id,))
         self.db.execute("DELETE FROM dialogue_state WHERE user_id=?", (user_id,))
-        self.db.execute("DELETE FROM inbox WHERE user_id=?", (user_id,))
+        # Retain only event IDs: a replay must not stop a resumed conversation.
+        self.db.execute("UPDATE inbox SET content='',status='handled' WHERE user_id=?", (user_id,))
         # Retain minimal suppression record to prevent unwanted re-contact.
         self.db.execute("UPDATE contacts SET speech_preferences=NULL,consultation_notes=NULL,username=NULL,city=NULL,source=NULL,ai_consent=0,crm_consent=0,stopped=1,submission_pending=0,name=NULL,phone=NULL,course=NULL,child_age=NULL,wanted_time=NULL,wants_trial=0,pending_notified=0,updated_at=? WHERE user_id=?",
                         (utc_now(), user_id))
         self.db.execute("UPDATE outbound_operations SET body='',state=CASE WHEN state IN ('draft','validated','approved') THEN 'blocked_by_policy' ELSE state END,error=CASE WHEN state IN ('draft','validated','approved') THEN 'recipient_declined' ELSE error END WHERE uid=?",(user_id,))
         self.db.execute("UPDATE contact_permission SET source='[revoked]',status='revoked',declined_at=? WHERE uid=?",(utc_now(),user_id))
         self.db.execute("INSERT INTO outbound_events(utc,event,operation,kind,status,error,source) VALUES(?,?,?,?,?,?,?)",(utc_now(),'recipient_declined',str(user_id),'conversation','declined','','recipient'))
-        self.db.commit()
+        self.db.execute("INSERT INTO dialogue_control(uid,state,revision) VALUES(?,'ai',1) ON CONFLICT(uid) DO UPDATE SET revision=revision+1", (user_id,))
+        if receipt:
+            self.db.execute('INSERT OR IGNORE INTO dialogue_transition_events VALUES(?)', (receipt,))
 
     def purge_old_turns(self, days: int = 30):
         before = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()

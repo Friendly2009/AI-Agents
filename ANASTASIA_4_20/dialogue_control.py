@@ -9,6 +9,10 @@ from pathlib import Path
 
 ACK = 'Передала вопрос менеджеру вместе с нашей перепиской. Он сможет продолжить здесь. Время ответа пока не подтверждено.'
 FAILED = 'Не удалось подтвердить доставку уведомления менеджеру. Успешная передача пока не подтверждена.'
+PRIVACY_RECEIPTS = {
+    'stop': 'Общение и приглашения остановлены. Удалить регистрационные данные: /удалить.',
+    'delete': 'Удалены регистрация семьи и история локальной переписки. Оставлен только технический запрет на повторное обращение. Если данные ранее передавались в AlfaCRM, для удаления оттуда обратитесь к Soft Skills.',
+}
 
 
 class DialogueControl:
@@ -97,4 +101,15 @@ class DialogueControl:
                 and operation['id'] == str(current['request']) + ':ack'
                 and operation['kind'] == 'handoff_ack'
                 and operation['source'] == 'dialogue_control' and operation['body'] == ACK)
+
+    def permits_privacy_ack(self, operation):
+        if not operation or operation['kind'] != 'privacy_ack' or operation['source'] != 'dialogue_control':
+            return False
+        uid = operation['uid']
+        return bool((self.store.get(uid) or {}).get('stopped')
+                    and any(operation['id'].startswith(f'privacy:{uid}:{action}:')
+                            and operation['body'] == body
+                            for action, body in PRIVACY_RECEIPTS.items())
+                    and self.db.execute('SELECT 1 FROM dialogue_transition_events WHERE id=?',
+                                        (operation['id'],)).fetchone())
 
