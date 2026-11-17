@@ -11,7 +11,7 @@ def utc_now() -> str:
 
 
 class Store:
-    def __init__(self, path: str | None = None):
+    def __init__(self, path: str | None = None, legacy_manager_path=None):
         path = path if path is not None else str(Path(__file__).resolve().parent / "data" / "softskills.db")
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path)
@@ -70,6 +70,9 @@ class Store:
         Ledger(self)
         from funnel import Funnel
         Funnel.migrate(self.db)
+        from dialogue_control import DialogueControl
+        self.control = DialogueControl(self)
+        self.control.migrate(legacy_manager_path or (None if path == ':memory:' else Path(path).parent / 'manager.db'))
 
     def configuration(self):
         from agent_config import Configuration
@@ -116,7 +119,10 @@ class Store:
     def dialogue(self, user_id):
         from dialogue_state import initial_state
         row = self.db.execute('SELECT payload FROM dialogue_state WHERE user_id=?', (user_id,)).fetchone()
-        return dict(initial_state(), **json.loads(row[0])) if row else initial_state()
+        state = dict(initial_state(), **json.loads(row[0])) if row else initial_state()
+        owner = self.control.get(user_id)['state']
+        state['handoff_status'] = {'human':'delivered', 'notifying':'pending', 'review':'pending', 'ai':'none'}[owner]
+        return state
 
     def _save_dialogue(self, user_id, state):
         self.db.execute('INSERT OR REPLACE INTO dialogue_state VALUES(?,?)',
@@ -127,6 +133,9 @@ class Store:
         state = self.dialogue(user_id)
         if not set(fields) <= set(state) or ('stage' in fields and fields['stage'] not in STAGES):
             raise ValueError('Invalid dialogue state')
+        legacy_handoff = fields.pop('handoff_status', None)
+        if legacy_handoff is not None:
+            raise ValueError('Use Store.control transitions for handoff ownership')
         state.update(fields)
         with self.db:
             self._save_dialogue(user_id, state)

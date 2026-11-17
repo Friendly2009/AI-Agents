@@ -8,6 +8,8 @@ class Manager:
     def __init__(self, path=None):
         path = path if path is not None else str(Path(__file__).resolve().parent / "data" / "manager.db")
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.path = path
+        self.store = None
         self.db=sqlite3.connect(path)
         self.db.row_factory=sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -31,11 +33,19 @@ class Manager:
     def claim(self,uid,mid):
         with self.db:
             return self.db.execute('INSERT OR IGNORE INTO messages VALUES(?,?)',(uid,mid)).rowcount==1
+    def bind(self, store):
+        self.store = store
+        return self
+    def control(self):
+        if self.store is None:
+            from storage import Store
+            self.store = Store(':memory:' if self.path == ':memory:' else str(Path(self.path).parent / 'softskills.db'), legacy_manager_path=None if self.path == ':memory:' else self.path)
+        return self.store.control
     def handoff(self,uid,active=True):
-        with self.db:self.db.execute('INSERT OR REPLACE INTO handoffs VALUES(?,?)',(uid,int(active)))
+        control = self.control()
+        control.takeover(uid) if active else control.resume(uid)
     def paused(self,uid):
-        row=self.db.execute('SELECT active FROM handoffs WHERE uid=?',(uid,)).fetchone()
-        return bool(row and row[0])
+        return self.control().blocked(uid)
     def add_slot(self,city,course,starts,capacity):
         dt=datetime.fromisoformat(starts)
         if city not in ('Александров','Ярославль') or not course.strip() or dt.tzinfo is None or dt<=datetime.now(timezone.utc) or not 1<=capacity<=1000:
@@ -228,8 +238,7 @@ async def commands(client,event,store,admin=False):
             answer='Статус обновлён локально. Это не запись занятия в AlfaCRM.'
         elif command=='/брони':answer='\n'.join(str(dict(r)) for r in M.db.execute('SELECT * FROM bookings ORDER BY id DESC LIMIT 25')) or 'Броней нет'
         elif command=='/вернуть_ии':
-            M.handoff(int(arg),False)
-            store.set_dialogue(int(arg), stage='engaged', handoff_status='none')
+            store.control.resume(int(arg), f'telegram:{uid}:{event.id}')
             answer='Автоответы для этого клиента возобновлены.'
         else:return False
         await event.reply(answer[:3900]);return True

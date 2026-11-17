@@ -34,7 +34,7 @@ from lead_delivery import deliver_lead
 from conversation_style import preference_updates, read_preferences, turn_state
 from sales_context import guard_sales_action
 from sales_learning import LEARNING
-from handoff_flow import requests_handoff, transfer_to_managers
+from handoff_flow import requests_handoff, transfer_to_managers, reply_to_handoff
 from policy import can_outreach, group_trigger, is_stop, is_yes, is_ai_decline, is_crm_consent
 from storage import Store
 from family_radar import FamilyRadar, campaign_key
@@ -49,6 +49,7 @@ from autojoin import (run_auto_join, refresh_pending, status_report as join_stat
 load_dotenv()
 LOG = logging.getLogger('softskills')
 STORE = Store()
+M.bind(STORE)
 RADAR = FamilyRadar()
 BASE = Path(__file__).resolve().parent
 from dialogue_state import guard_model, safe_reply, question_expired
@@ -185,12 +186,16 @@ async def director_message(client, event, owner_id):
 async def notice_owner(client, text):
     recipients = director_admin_ids(0)
     delivered = 0
+    uncertain = False
     for recipient in recipients or {'me'}:
         try:
             await client.send_message(recipient, text, parse_mode=None)
             delivered += 1
-        except Exception:
+        except Exception as exc:
+            uncertain |= not isinstance(exc, RPCError) or (getattr(exc, 'code', None) or 500) >= 500
             LOG.exception('Уведомление руководителю не доставлено')
+    if not delivered and uncertain:
+        raise RuntimeError('Manager notification unconfirmed; reconciliation required')
     return delivered
 
 
@@ -259,6 +264,7 @@ async def _handle_dm(client, event):
     user_id = event.sender_id
     testing = user_id in TESTERS
     STORE, M = TEST_SESSIONS[user_id] if testing else (globals()['STORE'], globals()['M'])
+    M.bind(STORE)
     async def notice_owner(client, message):
         if not testing:
             return await globals()['notice_owner'](client, message)
@@ -278,10 +284,8 @@ async def _handle_dm(client, event):
         if testing and text.startswith('/'):
             await event.reply('В тесте проверяем обычный диалог. Начать заново: /диалог_тест. Выйти: /конец_теста.')
             return
-        if text.lower() == '/продолжить':
-            STORE.update(user_id, stopped=0)
-            STORE.set_dialogue(user_id, stage='engaged', paused=False, declined=False, handoff_status='none')
-            M.handoff(user_id, False)
+        if text.lower().strip('.! ') in {'/продолжить', 'продолжим'}:
+            STORE.control.resume(user_id, f'telegram:{user_id}:{event.id}')
             await event.reply('Я на связи 🙂 Что хотели бы узнать?')
             return
         if text.lower() in {'/удалить', '/delete'}:
@@ -341,10 +345,9 @@ async def _handle_dm(client, event):
             return
         if requests_handoff(text, [] if question_expired(STORE.dialogue(user_id)) else STORE.history(user_id)):
             reply = await transfer_to_managers(client, notice_owner, M, user_id, contact, text, STORE.history(user_id), testing, store=STORE)
-            STORE.set_dialogue(user_id, stage='manager_handoff' if M.paused(user_id) else 'consultation', handoff_status='delivered' if M.paused(user_id) else 'failed')
             STORE.add_turn(user_id, 'user', text)
-            await event.reply(reply)
-            STORE.add_turn(user_id, 'assistant', reply)
+            if await reply_to_handoff(STORE, user_id, reply, event.reply, testing):
+                STORE.add_turn(user_id, 'assistant', reply)
             return
         if not testing and await manager_commands(client,event,STORE):
             return
@@ -352,12 +355,6 @@ async def _handle_dm(client, event):
             return
         if M.paused(user_id):
             STORE.add_turn(user_id, 'user', text)
-            reply = 'Ваш вопрос ожидает ответа менеджера. Чтобы продолжить со мной, напишите «продолжим».'
-            if text.lower().strip('.! ') == 'продолжим':
-                M.handoff(user_id, False)
-                reply = 'Продолжим. Что хотите уточнить?'
-            await event.reply(reply)
-            STORE.add_turn(user_id, 'assistant', reply)
             return
         if not testing and not safe_test_mode():
             LEARNING.mark_engaged(user_id, text)
@@ -439,6 +436,7 @@ async def _handle_dm(client, event):
             contact = STORE.get(user_id)
         STORE.add_turn(user_id, 'user', text)
         response_started = __import__('time').monotonic()
+        ownership_revision = STORE.control.get(user_id)['revision']
         # Recording consent is accepted only as an answer to the explicit recording question.
         try:
             # Telegram shows a genuine typing indicator while GPT prepares the response.
@@ -449,14 +447,16 @@ async def _handle_dm(client, event):
                 learning_note = LEARNING.prompt_hint(text, contact, history_for_ai, selection=learning_selection) if not testing else ''
                 parsed = await asyncio.wait_for(respond(history_for_ai, campaign=load_active(), learning_note=learning_note, manager=M, client_context=known_context(contact, dialogue), configuration=globals()['STORE'].configuration().resolve(user_id)),timeout=45)
         except Exception as exc:
+            if STORE.control.get(user_id)['revision'] != ownership_revision:
+                return
             from funnel import Funnel
             Funnel(STORE).metric('llm_error')
             LOG.error('Ошибка API GPT: %s', type(exc).__name__)
             if not testing and STORE.configuration().resolve(user_id)['values']['mode'] == 'paused':
                 return
             reply = await transfer_to_managers(client, notice_owner, M, user_id, contact, 'Не удалось подготовить ответ: ' + text, STORE.history(user_id), testing, store=STORE)
-            await event.reply(reply)
-            STORE.add_turn(user_id, 'assistant', reply)
+            if await reply_to_handoff(STORE, user_id, reply, event.reply, testing):
+                STORE.add_turn(user_id, 'assistant', reply)
             return
         parsed = guard_sales_action(parsed, text)
         state = turn_state(history_for_ai, preferences=contact.get('speech_preferences'))
@@ -471,12 +471,12 @@ async def _handle_dm(client, event):
                 and ready_for_recording(STORE.get(user_id))):
             parsed['next_action'] = 'recording'
         # Model suggestions never write permanent facts or grant consent.
-        if M.paused(user_id) or (STORE.get(user_id) or {}).get('stopped') or (not testing and STORE.configuration().resolve(user_id)['values']['mode'] == 'paused'):
+        if STORE.control.get(user_id)['revision'] != ownership_revision or M.paused(user_id) or (STORE.get(user_id) or {}).get('stopped') or (not testing and STORE.configuration().resolve(user_id)['values']['mode'] == 'paused'):
             return  # A manager took over while the model was running.
         if parsed.get('handoff'):
             reply = await transfer_to_managers(client, notice_owner, M, user_id, STORE.get(user_id), text, STORE.history(user_id), testing, store=STORE)
-            await event.reply(reply)
-            STORE.add_turn(user_id, 'assistant', reply)
+            if await reply_to_handoff(STORE, user_id, reply, event.reply, testing):
+                STORE.add_turn(user_id, 'assistant', reply)
             return
         reply = safe_reply(str(parsed['reply']), dialogue)
         current = STORE.get(user_id)

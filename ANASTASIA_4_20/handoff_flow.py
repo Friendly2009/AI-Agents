@@ -1,5 +1,6 @@
 """Explicit handoff intent and truthful delivery acknowledgement."""
 import re
+from dialogue_control import ACK, FAILED
 
 
 def requests_handoff(text, history):
@@ -15,33 +16,41 @@ def requests_handoff(text, history):
 async def transfer_to_managers(client, notify, manager, uid, contact, text, history, testing=False, store=None):
     if testing:
         return 'Тест: здесь я передала бы вопрос менеджеру. Уведомления отключены, можем продолжать проверку.'
+    if store is None:
+        store = manager.control().store
     username = (contact.get('username') or '').lstrip('@')
     link = 'https://t.me/' + username if re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{3,31}', username) else f'Telegram ID: {uid}'
     context = '\n'.join(f"{m['role']}: {m['content']}" for m in history[-6:])[-2200:]
     question = original_question(text, history)
-    if store is not None:
-        question = store.dialogue(uid).get('original_question') or question
-        store.set_dialogue(uid, handoff_status='pending', original_question=question)
+    question = store.dialogue(uid).get('original_question') or question
+    store.set_dialogue(uid, original_question=question)
+    key = store.control.begin(uid, store._inbound.get(uid, 'manual'))
+    if key is None:
+        return ACK if store.control.get(uid)['receipt'] else FAILED
     facts = '\n'.join(f'{key}: {contact[key]}' for key in ('name','city','course','child_age','wanted_time') if contact.get(key))
     message = f'Нужен менеджер\n{link}\nID: {uid}\nПричина: запрос консультации сотрудника\nВопрос: {question[:1000]}\nИзвестно:\n{facts}\nКонтекст:\n{context}\nВернуть помощника: /вернуть_ии {uid}'
     crm_status = 'карточка #' + str(contact['crm_id']) if contact.get('crm_id') else 'подтверждённого ID карточки нет'
     message += f'\nОбращение: TG-{uid}\nCRM: {crm_status}'
+    message += f'\nОперация передачи: {key}'
+    uncertain = False
     try:
         count = await notify(client, message)
     except Exception:
         count = 0
-    if count:
-        manager.handoff(uid)
-        if store is not None:
-            store.set_dialogue(uid, stage='manager_handoff', handoff_status='delivered')
-            from delivery import Ledger
-            ledger=Ledger(store)
-            with store.db:
-                ledger.event('conversation_handed_off',str(uid),status='delivered',source='recipient_request')
-        return 'Передала вопрос менеджеру вместе с нашей перепиской. Он сможет продолжить здесь. Время ответа пока не подтверждено.'
-    if store is not None:
-        store.set_dialogue(uid, handoff_status='failed')
-    return 'Не удалось доставить уведомление менеджеру. Запрос пока не передан. Можно попробовать ещё раз: «позовите менеджера». Я остаюсь на связи.'
+        uncertain = True
+    store.control.finish(uid, key, count, uncertain)
+    return ACK if count else FAILED
+
+
+async def reply_to_handoff(store, uid, reply, send, testing=False):
+    from outgoing import safe_mode
+    if testing:
+        return await send(reply)
+    if reply == ACK:
+        return await store.control.confirm(uid, lambda: send(ACK), safe=safe_mode())
+    if not store.control.blocked(uid):
+        return await send(reply)
+    return False
 
 
 def original_question(text, history):

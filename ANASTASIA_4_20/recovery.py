@@ -12,9 +12,10 @@ def report(store):
     return {'inbound_requires_review': store.pending_inbound(),
             'effects_require_review': [dict(r) for r in store.db.execute(
                 "SELECT * FROM effects WHERE state IN ('sending','uncertain')")],
-            'handoffs_require_review': [dict(user_id=r['user_id'], state=json.loads(r['payload']))
-                for r in store.db.execute('SELECT * FROM dialogue_state')
-                if json.loads(r['payload']).get('handoff_status') in {'pending','failed'}]}
+            'handoffs_require_review': [dict(r) for r in store.db.execute(
+                "SELECT * FROM dialogue_control WHERE state IN ('notifying','review')")],
+            'handoff_confirmations': [dict(r) for r in store.db.execute(
+                "SELECT c.uid,c.request,o.state,o.error FROM dialogue_control c LEFT JOIN outbound_operations o ON o.id=c.request || ':ack' WHERE c.receipt=1 AND c.state='human' AND (o.state IS NULL OR o.state!='sent')")]}
 
 
 def main():

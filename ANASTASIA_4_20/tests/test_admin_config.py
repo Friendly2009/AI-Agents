@@ -258,7 +258,7 @@ def test_operations_use_existing_manager(browser, store, tmp_path):
     store.ensure(42)
     login(browser, store)
     assert browser.request(dict(action='handoff', csrf=browser.csrf, uid=42))[0].startswith('200')
-    manager = Manager(str(tmp_path / 'manager.db'))
+    manager = Manager(str(tmp_path / 'manager.db')).bind(store)
     assert manager.paused(42)
     assert browser.request(dict(action='slot', csrf=browser.csrf, city='Александров', course='Python', starts='2099-01-20T18:00:00+03:00', capacity=10))[0].startswith('200')
     assert manager.slots()[0]['course'] == 'Python'

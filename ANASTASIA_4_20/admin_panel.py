@@ -112,7 +112,7 @@ class Panel:
                 session = dict(actor=None, csrf=secrets.token_urlsafe(32), expires=now + 1800)
                 self.sessions[sid] = session
                 extra.append(('Set-Cookie', f'anastasia_admin={sid}; Path=/; HttpOnly; SameSite=Strict; Max-Age=1800'))
-            store = Store(self.db_path)
+            store = Store(self.db_path, legacy_manager_path=self.manager_path)
             cfg = store.configuration()
             action = data.get('action', '') if method == 'POST' else ''
             if action == 'login':
@@ -186,7 +186,7 @@ class Panel:
             note = '<p class="notice">Сохранено. Новая версия применяется к следующим сообщениям.</p>'
         if action == 'slot':
             from manager import Manager
-            manager = Manager(self.manager_path)
+            manager = Manager(self.manager_path).bind(store)
             try:
                 manager.add_slot(data['city'], data['course'][:150], data['starts'], int(data['capacity']))
                 self.audit(store, actor, 'slot-created')
@@ -198,10 +198,9 @@ class Panel:
             uid = int(data['uid'])
             if not store.get(uid):
                 raise ValueError('Клиент не найден')
-            manager = Manager(self.manager_path)
+            manager = Manager(self.manager_path).bind(store)
             try:
                 manager.handoff(uid)
-                store.set_dialogue(uid, stage='manager_handoff', handoff_status='pending')
                 self.audit(store, actor, 'handoff-queued', str(uid))
             finally:
                 manager.db.close()
@@ -260,7 +259,7 @@ class Panel:
             from trial_offer import offer_context
             from prompt_builder import build_prompt
             manager = Manager(':memory:')
-            real_manager = Manager(self.manager_path)
+            real_manager = Manager(self.manager_path).bind(store)
             try:
                 manager.slots = real_manager.slots  # Preview and test use identical verified slots; usage remains in memory.
                 instructions, inputs, state = build_prompt(history, facts=knowledge(), orders=public_context(), slots=real_manager.slots(), offer=offer_context(), configuration=resolved)
@@ -275,7 +274,7 @@ class Panel:
                 real_manager.db.close()
         body += '</section>'
         from manager import Manager
-        manager = Manager(self.manager_path)
+        manager = Manager(self.manager_path).bind(store)
         try:
             body += '<section><h2>Занятия и аналитика</h2>' + dump(manager.slots()) + '<pre>' + esc(manager.report(store)) + '</pre>'
             body += self.form(csrf, 'slot', '<div class="grid">' + select('city', ('Александров', 'Ярославль'), 'Александров', 'Город') + field('course', label='Название занятия') + field('starts', label='Дата ISO, например 2027-01-20T18:00:00+03:00') + field('capacity', '10', 'Количество мест', 'number') + '</div><button>Добавить занятие</button>') + '</section>'

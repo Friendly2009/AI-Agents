@@ -34,8 +34,8 @@ def reset(base):
             db.execute('DELETE FROM dialogue_state WHERE user_id IN (SELECT user_id FROM reset_ids)')
             db.execute('DELETE FROM inbox WHERE user_id IN (SELECT user_id FROM reset_ids)')
             db.execute('''UPDATE contacts SET city='', ai_consent=0,crm_consent=0,initial_sent=0,name=NULL,phone=NULL,course=NULL,child_age=NULL,wanted_time=NULL,wants_trial=0,pending_notified=0,consultation_notes=NULL,submission_pending=0,ai_notice_shown=0 WHERE user_id IN (SELECT user_id FROM reset_ids)''')
-            if (data/'manager.db').exists():
-                db.execute('DELETE FROM ops.handoffs WHERE uid IN (SELECT user_id FROM reset_ids)')
+            # Ownership is intentionally retained. Only an explicit dialogue
+            # resume may release the manager lock; clearing history must not.
             if (data/'sales_learning.db').exists():
                 db.execute('DELETE FROM learning.labels WHERE interaction_id IN (SELECT id FROM learning.interactions WHERE user_id IN (SELECT user_id FROM reset_ids))')
                 db.execute('DELETE FROM learning.interactions WHERE user_id IN (SELECT user_id FROM reset_ids)')

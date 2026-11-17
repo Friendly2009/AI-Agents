@@ -21,7 +21,8 @@ class Reliability(unittest.IsolatedAsyncioTestCase):
     async def test_failure(self):
         for n in [AsyncMock(return_value=0),AsyncMock(side_effect=RuntimeError('offline'))]:
             m=Manager(':memory:');r=await transfer_to_managers(None,n,m,1,{},'Да',[])
-            self.assertFalse(m.paused(1));self.assertIn('не передан',r)
+            self.assertEqual(m.paused(1), n.side_effect is not None)
+            self.assertIn('не подтверждена',r)
     async def test_sandbox(self):
         m=Manager(':memory:');n=AsyncMock()
         r=await transfer_to_managers(None,n,m,1,{},'Да',[],True)

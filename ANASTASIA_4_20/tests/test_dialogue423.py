@@ -260,7 +260,8 @@ def test_manager_question_not_yes():
 
 @pytest.mark.parametrize('delivered', [0,1])
 def test_handoff_delivery(delivered):
-    manager=SimpleNamespace(handoff=lambda uid: None)
+    from manager import Manager
+    manager=Manager(':memory:')
     notify=AsyncMock(return_value=delivered)
     history=[{'role':'user','content':'А родители могут присутствовать?'}]
     reply=asyncio.run(transfer_to_managers(None,notify,manager,42,{'city':'Александров'},'Да',history))

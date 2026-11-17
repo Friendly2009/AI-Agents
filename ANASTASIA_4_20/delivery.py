@@ -64,14 +64,16 @@ class Ledger:
         from policy import valid_contact_permission
         return valid_contact_permission(dict(r) if r else None)
 
-    def check(self, uid, kind):
+    def check(self, uid, kind, operation=None):
         if self.store.outbound_blocked(): return 'account_restricted'
         if (self.store.get(uid) or {}).get('stopped'): return 'recipient_declined'
         if kind == 'admin': return ''
         config = self.store.configuration().resolve(uid)['values']
         if config['mode']=='paused' or not config['outbound_allowed']: return 'configuration_paused'
         state = self.store.dialogue(uid)
-        if state.get('handoff_status') == 'delivered' or state.get('paused'): return 'human_handoff'
+        if kind == 'handoff_ack':
+            if not self.store.control.permits_ack(operation): return 'invalid_handoff_ack'
+        elif self.store.control.blocked(uid) or state.get('paused'): return 'human_handoff'
         if kind == 'group_reply': return ''
         if kind == 'initial':
             if not self.permission(uid): return 'permission_missing_or_expired'
@@ -100,7 +102,7 @@ class Ledger:
         with self.db:
             r=self.row(key)
             if r['state'] != 'draft': return r['state']=='validated'
-            why=self.check(r['uid'],r['kind'])
+            why=self.check(r['uid'],r['kind'],r)
             state='blocked_by_policy' if why else 'validated'
             self.db.execute('UPDATE outbound_operations SET state=?,error=? WHERE id=?',(state,why,key))
             self.event('send_policy_checked',key,r['kind'],state,why,r['source'])
@@ -134,7 +136,7 @@ class Ledger:
             r=self.row(key)
             if not r or r['state'] != 'approved':
                 self.db.rollback(); return False
-            why=self.check(r['uid'],r['kind'])
+            why=self.check(r['uid'],r['kind'],r)
             if safe and not simulated: why='safe_test_mode'
             if r['kind']=='initial' and not why:
                 prior=self.db.execute("SELECT 1 FROM outbound_operations WHERE uid=? AND kind='initial' AND attempted IS NOT NULL AND simulated=?",(r['uid'],int(simulated))).fetchone()
@@ -195,6 +197,7 @@ class TestTransport:
 
 class GuardedTelegramClient(TelegramClient):
     def configure_delivery(self,store,admins,manager):
+        manager.bind(store)
         self.delivery=Ledger(store);self.delivery_admins=set(admins);self.delivery_manager=manager
 
     async def __call__(self, request, *args, **kwargs):
@@ -216,12 +219,16 @@ class GuardedTelegramClient(TelegramClient):
         uid=utils.get_peer_id(peer)
         current=active_send.get()
         if current and current[0]==uid:
+            operation = self.delivery.row(current[1])
+            why = self.delivery.check(uid, operation['kind'], operation)
+            if operation['kind'] == 'handoff_ack' and str(message) != operation['body']:
+                why = 'invalid_handoff_ack'
+            if why:
+                raise PolicyBlocked(why)
             return await super().send_message(peer,message,*args,**kwargs)
         store=self.delivery.store
         kind='admin' if uid in self.delivery_admins else ('group_reply' if uid<0 and kwargs.get('reply_to') else 'reply')
         mid=store._inbound.get(uid) or kwargs.get('reply_to')
-        if kind=='reply' and self.delivery_manager.paused(uid):
-            raise PolicyBlocked('human_handoff')
         # No implicit first contact from a raw send_message call.
         digest=hashlib.sha256(str(message).encode()).hexdigest()[:24]
         key=f'{kind}:{uid}:{getattr(mid,"id",mid)}:{digest}'

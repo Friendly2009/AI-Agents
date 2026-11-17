@@ -132,7 +132,7 @@ def test_journal_minimal_structured_data(store):
 def test_handoff_and_campaign_no_reply(store):
     l=approved(store);assert l.check(42,'campaign')=='no_recipient_response'
     store.claim_inbound(42,1,'да');assert not l.check(42,'campaign')
-    store.set_dialogue(42,handoff_status='delivered')
+    store.control.takeover(42)
     assert l.check(42,'reply')=='human_handoff';assert l.check(42,'initial')=='human_handoff'
 
 async def make_guard(store,monkeypatch,admins=()):
