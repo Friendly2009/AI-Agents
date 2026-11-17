@@ -103,31 +103,34 @@ def compose_first_message(first_name: str = '', campaign: dict | None = None, ag
             'Если неактуально, напишите «неинтересно», и мы больше не будем обращаться.')
 
 
-async def draft_from_owner_idea(brief: str) -> dict:
+async def draft_from_owner_idea(brief: str, *, manager) -> dict:
     brief = brief.strip()
     if not 15 <= len(brief) <= 2400:
         raise ValueError('Описание идеи должно содержать от 15 до 2400 символов.')
     from openai import AsyncOpenAI
     client = AsyncOpenAI(api_key=os.environ['OPENAI_API_KEY'], timeout=30)
-    from manager import M
+    M = manager
     M.llm_request(os.getenv('OPENAI_MODEL', 'gpt-5-mini'))
-    resp = await client.responses.create(
-        model=os.getenv('OPENAI_MODEL', 'gpt-5-mini'),
-        instructions=(
-            'Ты редактор приглашений детских образовательных мероприятий Soft Skills. '
-            'Из инструкции владельца составь лаконичное, доброжелательное приглашение для родителей. '
-            'Без утверждений о детях адресата, без выдуманных дат, цен, обещаний или свободных мест. '
-            'Если мероприятие лишь планируется, используй "планируем", не утверждай, что оно уже запущено. '
-            'Не спрашивай разрешение прислать рекламу: контакты для исходящих выбираются отдельной программой '
-            'только среди тех, кто заранее разрешил связь. Заканчивай вопросом об актуальности. '
-            'Не называй менеджера человеком или виртуальным. Не скрывай организатора Soft Skills. '
-            'Верни только JSON по схеме. Тело 1–3 коротких предложения.'
-        ),
-        input=brief,
-        max_output_tokens=400,
-        text={'format': {'type': 'json_schema', 'name': 'outreach_campaign', 'strict': True,
-                         'schema': CAMPAIGN_SCHEMA}},
-    )
+    try:
+        resp = await client.responses.create(
+            model=os.getenv('OPENAI_MODEL', 'gpt-5-mini'),
+            instructions=(
+                'Ты редактор приглашений детских образовательных мероприятий Soft Skills. '
+                'Из инструкции владельца составь лаконичное, доброжелательное приглашение для родителей. '
+                'Без утверждений о детях адресата, без выдуманных дат, цен, обещаний или свободных мест. '
+                'Если мероприятие лишь планируется, используй "планируем", не утверждай, что оно уже запущено. '
+                'Не спрашивай разрешение прислать рекламу: контакты для исходящих выбираются отдельной программой '
+                'только среди тех, кто заранее разрешил связь. Заканчивай вопросом об актуальности. '
+                'Не называй менеджера человеком или виртуальным. Не скрывай организатора Soft Skills. '
+                'Верни только JSON по схеме. Тело 1–3 коротких предложения.'
+            ),
+            input=brief,
+            max_output_tokens=400,
+            text={'format': {'type': 'json_schema', 'name': 'outreach_campaign', 'strict': True,
+                             'schema': CAMPAIGN_SCHEMA}},
+        )
+    finally:
+        await client.close()
     if getattr(resp,'usage',None):
         M.usage(os.getenv('OPENAI_MODEL', 'gpt-5-mini'),resp.usage.input_tokens,resp.usage.output_tokens)
     parsed = json.loads(resp.output_text.strip())

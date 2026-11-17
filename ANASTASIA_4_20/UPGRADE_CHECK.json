@@ -1,0 +1,26 @@
+{
+  "result": "passed",
+  "schema_and_rows_unchanged": true,
+  "databases": {
+    "family_radar.db": {
+      "integrity": "ok",
+      "tables": 3,
+      "rows": 1
+    },
+    "manager.db": {
+      "integrity": "ok",
+      "tables": 6,
+      "rows": 2
+    },
+    "sales_learning.db": {
+      "integrity": "ok",
+      "tables": 5,
+      "rows": 3
+    },
+    "softskills.db": {
+      "integrity": "ok",
+      "tables": 22,
+      "rows": 16
+    }
+  }
+}

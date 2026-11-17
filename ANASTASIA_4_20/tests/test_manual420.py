@@ -18,9 +18,9 @@ class ManualTests(unittest.IsolatedAsyncioTestCase):
         for kw in [{'safe':True},{'bot':True},{'excluded':{42}}]:
             self.assertFalse(remember_opening(self.s,self.m,42,'Привет',**kw))
         self.assertIsNone(self.s.get(42))
-        self.s.ensure(42);self.s.update(42,stopped=1)
+        self.s.ensure(42);ConversationState(self.s).update(42,stopped=1)
         self.assertFalse(remember_opening(self.s,self.m,42,'Привет'))
-        self.s.update(42,stopped=0);self.m.handoff(42)
+        ConversationState(self.s).update(42,stopped=0);self.m.handoff(42)
         self.assertFalse(remember_opening(self.s,self.m,42,'Привет'))
     async def test_recovery(self):
         e=SimpleNamespace(sender_id=42,chat_id=42,id=15,get_sender=AsyncMock(return_value=SimpleNamespace(bot=False,deleted=False,username=None)))
@@ -38,3 +38,5 @@ class ManualTests(unittest.IsolatedAsyncioTestCase):
         c=SimpleNamespace(get_messages=AsyncMock(return_value=[SimpleNamespace(out=False,message='Привет')]))
         self.assertFalse(await recover_opening(c,e,self.s,self.m))
         self.assertIsNone(self.s.get(42))
+
+from conversation_service import ConversationState

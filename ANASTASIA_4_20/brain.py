@@ -4,7 +4,7 @@ import json
 import os
 from openai import AsyncOpenAI
 from director_orders import public_context
-from manager import M, knowledge
+from manager import knowledge
 
 from prompt_builder import build_prompt
 from trial_offer import offer_context
@@ -34,15 +34,12 @@ SCHEMA['required'] += ['consultation_notes','next_action','trial_decision']
 
 
 async def respond(history: list[dict], campaign: dict | None = None, learning_note: str = "", manager=None, client_context=None, settings=None, configuration=None):
-    manager = manager if manager is not None else M
+    if manager is None:
+        raise ValueError('respond requires an explicit manager')
     model = os.getenv("OPENAI_MODEL", "gpt-5-mini")
     if configuration is None:
-        from storage import Store
-        store = Store()
-        try:
-            configuration = store.configuration().resolve()
-        finally:
-            store.db.close()
+        from agent_config import defaults
+        configuration = {'values': defaults(), 'prompts': []}
     model = configuration['values']['model']
     # Use only the owner-approved active offer; do not invent event details.
     campaign = campaign or {}
@@ -51,8 +48,8 @@ async def respond(history: list[dict], campaign: dict | None = None, learning_no
         offer=offer_context(), campaign=campaign, client_context=client_context,
         learning_note=learning_note, settings=settings, configuration=configuration)
     client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"], timeout=30)
-    manager.llm_request(model)
     try:
+        manager.llm_request(model)
         response = await client.responses.create(
             model=model,
             instructions=instructions,

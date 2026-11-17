@@ -41,7 +41,7 @@ class Funnel:
             raise ValueError('CRM evidence requires an external record ID')
         if not confirmation:
             raise ValueError('Confirmation source is required')
-        from outgoing import safe_mode
+        from runtime_policy import safe_mode
         mode = 'test' if getattr(self.store, 'analytics_test', False) or safe_mode() else 'live'
         contact = self.store.get(uid) or {}
         self.db.execute('''INSERT OR IGNORE INTO funnel_events
@@ -52,7 +52,7 @@ class Funnel:
              actor_id,mode,key or f'{event}:{uid}',json.dumps(details or {},ensure_ascii=False)))
 
     def metric(self, kind, value=None):
-        from outgoing import safe_mode
+        from runtime_policy import safe_mode
         mode = 'test' if getattr(self.store, 'analytics_test', False) or safe_mode() else 'live'
         with self.db:
             self.db.execute('INSERT INTO sales_telemetry(kind,value,mode,occurred_at) VALUES(?,?,?,?)',

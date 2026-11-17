@@ -13,3 +13,8 @@ def pytest_sessionstart(session):
     socket.socket.connect = blocked
     socket.socket.connect_ex = blocked
     socket.create_connection = blocked
+
+def pytest_sessionfinish(session, exitstatus):
+    from app_factory import created
+    for app in created:
+        app.close()

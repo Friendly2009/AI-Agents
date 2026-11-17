@@ -121,35 +121,38 @@ def _check_order(order):
     return order
 
 
-async def interpret(text:str):
+async def interpret(text:str, *, manager):
     if not os.getenv('OPENAI_API_KEY','').strip():
         raise ValueError('Для свободной речи и текста нужен OPENAI_API_KEY; настройки не изменены')
     today=date.today().isoformat()
     from openai import AsyncOpenAI
     client=AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY'),timeout=45)
-    from manager import M
+    M = manager
     M.llm_request(os.getenv('DIRECTOR_MODEL',os.getenv('OPENAI_MODEL','gpt-5-mini')))
-    response=await client.responses.create(
-        model=os.getenv('DIRECTOR_MODEL',os.getenv('OPENAI_MODEL','gpt-5-mini')),
-        instructions=(
-            'Ты извлекаешь распоряжения руководства для Soft Skills. Верни только JSON по схеме. '
-            'События: лагеря, поездки, акции, курсы и мероприятия. '
-            f'Сегодня {today}. Вход на русском. Указывай только дословно сообщённые даты, цены и ограничения. '
-            'Преобразуй однозначные русские календарные даты в ISO YYYY-MM-DD, не добавляй выходные или пропущенные даты. '
-            'Если год отсутствует и не следует однозначно из текста, верни вопросы и не выдумывай дату. '
-            'При команде "главный приоритет" ставь priority=5, для "второй по важности" ставь priority=4, при "после даты" учитывай указанную дату как priority_until. '
-            'Если в приказе несколько событий, верни отдельные действия. '
-            'При неполных данных оставляй nullable поля null: это означает НЕ МЕНЯТЬ существующее значение. '
-            'Никогда не используй примерные цены и не превращай их в подтверждённые. '
-            'Если сказано, что мероприятие отменено, status=cancelled. '
-            'Если нужно изменить отдельное поле, используй точно указанное название существующего предложения. '
-            'Если инструкция не содержит ни одного конкретного изменения, actions=[] (такая команда будет отклонена). '
-            'Для уточнения недостающей цены лагеря укажи вопрос в questions; НЕ придумывай цену.'
-        ),
-        input=text[:4000],
-        max_output_tokens=1300,
-        text={'format':{'type':'json_schema','name':'director_orders','strict':True,'schema':ORDER_SCHEMA}},
-    )
+    try:
+        response=await client.responses.create(
+            model=os.getenv('DIRECTOR_MODEL',os.getenv('OPENAI_MODEL','gpt-5-mini')),
+            instructions=(
+                'Ты извлекаешь распоряжения руководства для Soft Skills. Верни только JSON по схеме. '
+                'События: лагеря, поездки, акции, курсы и мероприятия. '
+                f'Сегодня {today}. Вход на русском. Указывай только дословно сообщённые даты, цены и ограничения. '
+                'Преобразуй однозначные русские календарные даты в ISO YYYY-MM-DD, не добавляй выходные или пропущенные даты. '
+                'Если год отсутствует и не следует однозначно из текста, верни вопросы и не выдумывай дату. '
+                'При команде "главный приоритет" ставь priority=5, для "второй по важности" ставь priority=4, при "после даты" учитывай указанную дату как priority_until. '
+                'Если в приказе несколько событий, верни отдельные действия. '
+                'При неполных данных оставляй nullable поля null: это означает НЕ МЕНЯТЬ существующее значение. '
+                'Никогда не используй примерные цены и не превращай их в подтверждённые. '
+                'Если сказано, что мероприятие отменено, status=cancelled. '
+                'Если нужно изменить отдельное поле, используй точно указанное название существующего предложения. '
+                'Если инструкция не содержит ни одного конкретного изменения, actions=[] (такая команда будет отклонена). '
+                'Для уточнения недостающей цены лагеря укажи вопрос в questions; НЕ придумывай цену.'
+            ),
+            input=text[:4000],
+            max_output_tokens=1300,
+            text={'format':{'type':'json_schema','name':'director_orders','strict':True,'schema':ORDER_SCHEMA}},
+        )
+    finally:
+        await client.close()
     if getattr(response,'usage',None):
         M.usage(os.getenv('DIRECTOR_MODEL',os.getenv('OPENAI_MODEL','gpt-5-mini')),response.usage.input_tokens,response.usage.output_tokens)
     if not response.output_text: raise ValueError('GPT не вернул распоряжение')

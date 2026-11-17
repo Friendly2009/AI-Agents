@@ -1,5 +1,6 @@
 """Remember a manually started private conversation without sending messages."""
 def remember_opening(store, manager, uid, text, username='', excluded=(), safe=False, bot=False):
+    manager.bind(store)
     if safe or bot or uid in excluded or uid == 777000 or not text.strip() or text.lstrip().startswith('/'):
         return False
     if store.db.execute('SELECT 1 FROM outbound_operations WHERE uid=? AND attempted IS NOT NULL AND simulated=0',(uid,)).fetchone():
@@ -8,8 +9,8 @@ def remember_opening(store, manager, uid, text, username='', excluded=(), safe=F
     if contact.get('stopped') or manager.paused(uid) or store.history(uid):
         return False
     store.ensure(uid, username=username or '', source='Личный чат начат с аккаунта Анастасии')
-    store.add_turn(uid, 'assistant', text)
-    store.update(uid, ai_notice_shown=1)
+    ConversationState(store).add_turn(uid, 'assistant', text)
+    ConversationState(store).update(uid, ai_notice_shown=1)
     store.mark_sent(uid, 'Ручное начало диалога')
     from delivery import Ledger
     ledger=Ledger(store)
@@ -34,3 +35,5 @@ async def recover_opening(client, event, store, manager, excluded=()):
         return False
     return remember_opening(store, manager, uid, getattr(messages[0], 'message', '') or '',
                             getattr(sender, 'username', '') or '', excluded)
+
+from conversation_service import ConversationState

@@ -89,15 +89,6 @@ class DialogueControl:
             self.db.execute('UPDATE handoff_requests SET state=? WHERE id=?', ('delivered' if delivered else ('uncertain' if uncertain else 'failed'),key))
             self.db.execute("UPDATE dialogue_control SET state=?,receipt=? WHERE uid=? AND request=? AND state='notifying'", (state,int(bool(delivered)),uid,key))
 
-    def acknowledgement(self, uid):
-        from delivery import Ledger
-        current = self.get(uid)
-        if current['state'] != 'human' or not current['receipt'] or not current['request']:
-            return None
-        key = current['request'] + ':ack'
-        Ledger(self.store).prepare(key, uid, 'handoff_ack', 'dialogue_control', ACK)
-        return key
-
     def permits_ack(self, operation):
         if not operation:
             return False
@@ -107,12 +98,3 @@ class DialogueControl:
                 and operation['kind'] == 'handoff_ack'
                 and operation['source'] == 'dialogue_control' and operation['body'] == ACK)
 
-    async def confirm(self, uid, send, safe=True):
-        from delivery import Ledger
-        key = self.acknowledgement(uid)
-        if not key:
-            return False
-        ledger = Ledger(self.store)
-        ledger.validate(key)
-        ledger.approve(key)
-        return await ledger.deliver(key, send, safe=safe)

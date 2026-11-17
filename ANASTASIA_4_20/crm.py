@@ -92,7 +92,7 @@ def _create(customer, lookup_only=False):
 
 async def create_lead(customer):
     """None means integration not configured; no fake success."""
-    from outgoing import safe_mode
+    from runtime_policy import safe_mode
     if safe_mode():
         return None
     if not customer.get('crm_consent') or not customer.get('wants_trial') or customer.get('stopped'):
@@ -104,7 +104,7 @@ async def create_lead(customer):
 
 async def reconcile_lead(customer):
     """Read-only recovery: never create again after an ambiguous write."""
-    from outgoing import safe_mode
+    from runtime_policy import safe_mode
     if safe_mode(): return None
     if not customer.get('crm_consent') or customer.get('stopped'):
         raise ValueError('Active consent required')

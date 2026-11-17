@@ -1,6 +1,0 @@
-Python 3.14 / Windows
-Command: python -X utf8 -m pytest -q
-Result: 251 passed, 10 subtests passed in 3.78s
-External network blocked by tests/conftest.py. LLM and delivery tests use mocks.
-UI evidence generated successfully by python render_panel_demo.py via the real WSGI handler.
-No live Telegram/OpenAI/AlfaCRM checks were performed.

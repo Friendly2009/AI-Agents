@@ -150,7 +150,7 @@ async def run_auto_join(client, *, selected: list[str] | None = None,
     `join_fn(username)` is injection point for tests. It returns 'joined' or
     'pending'. A real client uses channels.JoinChannelRequest only.
     """
-    from outgoing import safe_mode
+    from runtime_policy import safe_mode
     state = read_state(state_path)
     if safe_mode() or state.get('restriction'):
         return {"message": "SAFE TEST или ограничение Telegram: вступления отключены",

@@ -4,10 +4,7 @@ import sqlite3
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from clock_utils import utc_now
 
 
 class Store:
@@ -66,8 +63,8 @@ class Store:
 
         from agent_config import Configuration
         Configuration.migrate(self.db)
-        from delivery import Ledger
-        Ledger(self)
+        from delivery_schema import migrate
+        migrate(self.db)
         from funnel import Funnel
         Funnel.migrate(self.db)
         from dialogue_control import DialogueControl
@@ -88,6 +85,15 @@ class Store:
         self.db.commit()
 
     def update(self, user_id: int, **fields):
+        with self.transaction():
+            self.write_contact(user_id, **fields)
+
+    def transaction(self):
+        """Synchronous local unit of work; never span a network await."""
+        return self.db
+
+    def write_contact(self, user_id: int, **fields):
+        """Persistence primitive. The caller owns the transaction."""
         if not fields:
             return
         valid = {"username", "city", "source", "ai_consent", "crm_consent", "stopped",
@@ -95,26 +101,33 @@ class Store:
                  "wants_trial", "crm_id", "pending_notified", "consultation_notes", "speech_preferences"}
         if not set(fields) <= valid:
             raise ValueError("Forbidden contact fields")
-        from funnel import Funnel
-        before = self.get(user_id) or {}
-        for field, event in [('ai_consent','contact_authorized'),('stopped','client_declined')]:
-            if fields.get(field) and not before.get(field):
-                Funnel(self).emit(user_id,event,confirmation='explicit_client_action')
         fields["updated_at"] = utc_now()
         sets = ", ".join(f"{key}=?" for key in fields)
         self.db.execute(f"UPDATE contacts SET {sets} WHERE user_id=?", (*fields.values(), user_id))
-        self.db.commit()
 
-    def add_turn(self, user_id: int, role: str, content: str):
-        from dialogue_state import after_reply
-        with self.db:
-            self.db.execute("INSERT INTO turns(user_id,role,content,created_at) VALUES(?,?,?,?)",
-                            (user_id, role, content, utc_now()))
-            if role == 'assistant':
-                self._save_dialogue(user_id, after_reply(self.dialogue(user_id), content))
-                if user_id in self._inbound:
-                    self.db.execute("UPDATE inbox SET status='answered' WHERE user_id=? AND message_id=?",
-                                    (user_id, self._inbound[user_id]))
+    def append_turn(self, user_id, role, content):
+        self.db.execute('INSERT INTO turns(user_id,role,content,created_at) VALUES(?,?,?,?)',
+                        (user_id, role, content, utc_now()))
+
+    def mark_answered(self, user_id, message_id):
+        self.db.execute("UPDATE inbox SET status='answered' WHERE user_id=? AND message_id=?", (user_id,message_id))
+
+    def insert_inbound(self, user_id, message_id, text):
+        return self.db.execute('INSERT OR IGNORE INTO inbox(user_id,message_id,content,created_at) VALUES(?,?,?,?)',
+                               (user_id,message_id,text,utc_now())).rowcount
+
+    def has_assistant_turn(self, user_id):
+        return bool(self.db.execute('SELECT 1 FROM turns WHERE user_id=? AND role=? LIMIT 1', (user_id,'assistant')).fetchone())
+
+    def journal_inbound(self, user_id):
+        self.db.execute('INSERT INTO outbound_events(utc,event,operation,kind,status,error,source) VALUES(?,?,?,?,?,?,?)',
+                        (utc_now(),'conversation_resumed',str(user_id),'conversation','inbound','','telegram'))
+
+    def write_effect(self, key, state):
+        if state not in {'sent', 'uncertain'}:
+            raise ValueError('Invalid effect state')
+        self.db.execute('UPDATE effects SET state=?,updated_at=? WHERE effect_key=?', (state,utc_now(),key))
+
 
     def dialogue(self, user_id):
         from dialogue_state import initial_state
@@ -140,48 +153,7 @@ class Store:
         with self.db:
             self._save_dialogue(user_id, state)
 
-    def claim_inbound(self, user_id, message_id, text):
-        # Retain interrupted events for operator recovery; never blindly replay external effects.
-        with self.db:
-            inserted = self.db.execute('INSERT OR IGNORE INTO inbox(user_id,message_id,content,created_at) VALUES(?,?,?,?)',
-                                       (user_id, message_id, text, utc_now())).rowcount
-        if inserted:
-            from funnel import Funnel
-            with self.db:
-                f=Funnel(self)
-                f.emit(user_id,'conversation_started',confirmation='telegram_inbound')
-                previous=self.db.execute('SELECT 1 FROM turns WHERE user_id=? AND role=? LIMIT 1',(user_id,'assistant')).fetchone()
-                if previous:
-                    f.emit(user_id,'client_replied',confirmation='telegram_inbound')
-            self._inbound[user_id] = message_id
-        if inserted:
-            from delivery import Ledger
-            with self.db:
-                Ledger(self).event('conversation_resumed', str(user_id), status='inbound', source='telegram')
-        return bool(inserted)
 
-    def observe(self, user_id, text):
-        from dialogue_state import reduce_user
-        # Facts, evidence and state commit together, before any model/network call.
-        with self.db:
-            state, updates = reduce_user(self.dialogue(user_id), text, self.get(user_id) or {})
-            if updates:
-                fields = dict(updates, updated_at=utc_now())
-                self.db.execute('UPDATE contacts SET ' + ','.join(k+'=?' for k in fields) + ' WHERE user_id=?',
-                                (*fields.values(), user_id))
-            self._save_dialogue(user_id, state)
-            from funnel import Funnel
-            from objections import classify
-            f = Funnel(self)
-            contact = self.get(user_id) or {}
-            if contact.get('name') and contact.get('city') and contact.get('child_age'):
-                f.emit(user_id,'qualified',reliability='intent',confirmation='user_text_rules')
-            if contact.get('wants_trial'):
-                f.emit(user_id,'trial_interested',reliability='intent',confirmation='user_text_rules')
-            if state.get('declined'):
-                f.emit(user_id,'client_declined',reliability='intent',confirmation='user_text_rules',
-                       details={'reason': classify(text) or 'unspecified'})
-        return state
 
     def pending_inbound(self):
         return [dict(r) for r in self.db.execute("SELECT * FROM inbox WHERE status='received' ORDER BY created_at")]
@@ -192,28 +164,7 @@ class Store:
                 self.db.execute("UPDATE inbox SET status='handled' WHERE user_id=? AND message_id=? AND status='received'",
                                 (user_id, message_id))
 
-    def recording_consent(self, user_id, decision):
-        with self.db:
-            if decision:
-                from funnel import Funnel
-                Funnel(self).emit(user_id,'trial_requested',reliability='intent',confirmation='explicit_recording_consent')
-            self.db.execute('UPDATE contacts SET crm_consent=?,submission_pending=?,updated_at=? WHERE user_id=?',
-                            (int(decision), int(decision), utc_now(), user_id))
-            state = self.dialogue(user_id)
-            state.update(application_status='pending' if decision else 'consent_refused',
-                         expected_action='submit' if decision else None)
-            self._save_dialogue(user_id, state)
 
-    def submitted(self, user_id, crm_id, effect_key):
-        with self.db:
-            from funnel import Funnel
-            Funnel(self).emit(user_id,'lead_created',reliability='crm',confirmation='alfacrm_customer',external_id=crm_id)
-            self.db.execute('UPDATE contacts SET crm_id=?,submission_pending=0,updated_at=? WHERE user_id=?',
-                            (crm_id, utc_now(), user_id))
-            self.db.execute("UPDATE effects SET state='sent',updated_at=? WHERE effect_key=?", (utc_now(), effect_key))
-            state = self.dialogue(user_id)
-            state.update(stage='lead_submitted', application_status='submitted')
-            self._save_dialogue(user_id, state)
 
     def history(self, user_id: int, limit: int = 12) -> list[dict]:
         rows = self.db.execute("SELECT role,content FROM (SELECT id,role,content FROM turns WHERE user_id=? ORDER BY id DESC LIMIT ?) ORDER BY id",

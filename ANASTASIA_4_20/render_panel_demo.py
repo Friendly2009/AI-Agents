@@ -18,7 +18,7 @@ def render():
         store = Store(db)
         cleanup.callback(store.db.close)
         store.ensure(4242)
-        store.update(4242, name='Демонстрационный клиент', city='Александров', wants_trial=1)
+        ConversationState(store).update(4242, name='Демонстрационный клиент', city='Александров', wants_trial=1)
         cfg = store.configuration()
         base = dict(settings={'conversation_style': 'friendly', 'warmth': 4}, prompt='Объясняй учебные проекты понятными примерами.', enabled=True, deleted=False, group='')
         cfg.save(101, 'global', 'global', base, 0)
@@ -58,3 +58,5 @@ def render():
 
 if __name__ == '__main__':
     render()
+
+from conversation_service import ConversationState

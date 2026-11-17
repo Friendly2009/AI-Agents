@@ -6,7 +6,7 @@ from datetime import datetime, timezone, date, timedelta
 from contextvars import ContextVar
 from telethon import TelegramClient, utils
 from telethon.errors import RPCError
-from storage import utc_now
+from clock_utils import utc_now
 
 active_send = ContextVar('active_send', default=None)
 RESTRICTIONS = {'PeerFloodError','FloodWaitError','AuthKeyUnregisteredError',
@@ -19,24 +19,8 @@ class PolicyBlocked(RuntimeError):
 class Ledger:
     def __init__(self, store):
         self.store, self.db = store, store.db
-        if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='outbound_events'").fetchone():
-            return
-        self.db.executescript('''
-        CREATE TABLE IF NOT EXISTS contact_permission (
-            uid INTEGER PRIMARY KEY, source TEXT NOT NULL, granted TEXT NOT NULL,
-            status TEXT NOT NULL, declined_at TEXT);
-        CREATE TABLE IF NOT EXISTS outbound_operations (
-            id TEXT PRIMARY KEY, uid INTEGER NOT NULL, kind TEXT NOT NULL,
-            source TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', state TEXT NOT NULL,
-            created TEXT NOT NULL, attempted TEXT, error TEXT, message_id INTEGER,
-            batch TEXT, simulated INTEGER NOT NULL DEFAULT 0);
-        CREATE UNIQUE INDEX IF NOT EXISTS one_initial_attempt ON outbound_operations(uid)
-            WHERE kind='initial' AND attempted IS NOT NULL AND simulated=0;
-        CREATE TABLE IF NOT EXISTS outbound_events (
-            seq INTEGER PRIMARY KEY, utc TEXT NOT NULL, event TEXT NOT NULL,
-            operation TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
-            error TEXT NOT NULL, source TEXT NOT NULL);
-        ''')
+        from delivery_schema import migrate
+        migrate(self.db)
 
     def event(self, event, key='', kind='conversation', status='', error='', source='application'):
         self.db.execute('INSERT INTO outbound_events(utc,event,operation,kind,status,error,source) VALUES(?,?,?,?,?,?,?)',
@@ -159,7 +143,7 @@ class Ledger:
             self.db.commit()
         except BaseException:
             self.db.rollback(); raise
-        token=active_send.set((r['uid'],key))
+        token=active_send.set((r['uid'],key,self.store))
         try:
             result=await send(r['uid'],r['body']) if simulated else await send()
         except (Exception, asyncio.CancelledError) as exc:
@@ -218,7 +202,7 @@ class GuardedTelegramClient(TelegramClient):
         peer=await self.get_input_entity(entity)
         uid=utils.get_peer_id(peer)
         current=active_send.get()
-        if current and current[0]==uid:
+        if current and current[0]==uid and current[2] is self.delivery.store:
             operation = self.delivery.row(current[1])
             why = self.delivery.check(uid, operation['kind'], operation)
             if operation['kind'] == 'handoff_ack' and str(message) != operation['body']:
@@ -238,7 +222,7 @@ class GuardedTelegramClient(TelegramClient):
         async def send():
             value=await super(GuardedTelegramClient,self).send_message(peer,message,*args,**kwargs)
             result.append(value);return value
-        from outgoing import safe_mode
+        from runtime_policy import safe_mode
         if not await self.delivery.deliver(key,send,safe=safe_mode()):
             raise PolicyBlocked(self.delivery.row(key).get('error') or self.delivery.row(key)['state'])
         return result[0]

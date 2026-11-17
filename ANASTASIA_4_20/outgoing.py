@@ -2,8 +2,8 @@
 import os
 from delivery import Ledger
 
-def safe_mode():
-    return os.getenv('SAFE_TEST_MODE','true').strip().lower() != 'false'
+from runtime_policy import safe_mode
+from clock_utils import utc_now
 
 async def send_once(store,key,uid,send,safe=safe_mode):
     ledger=Ledger(store)
@@ -18,9 +18,9 @@ async def send_once(store,key,uid,send,safe=safe_mode):
         sent=await ledger.deliver(key,send,safe=safe())
     except BaseException:
         with store.db:
-            store.db.execute('INSERT OR REPLACE INTO effects VALUES(?,?,?)',(key,'uncertain',__import__('storage').utc_now()))
+            store.db.execute('INSERT OR REPLACE INTO effects VALUES(?,?,?)',(key,'uncertain',utc_now()))
         raise
     if sent:
         with store.db:
-            store.db.execute('INSERT OR REPLACE INTO effects VALUES(?,?,?)',(key,'sent',__import__('storage').utc_now()))
+            store.db.execute('INSERT OR REPLACE INTO effects VALUES(?,?,?)',(key,'sent',utc_now()))
     return sent

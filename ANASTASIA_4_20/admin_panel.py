@@ -209,7 +209,7 @@ class Panel:
             uid = int(data['uid'])
             if not store.get(uid):
                 raise ValueError('Клиент не найден')
-            store.update(uid, stopped=1)
+            ConversationState(store).update(uid, stopped=1)
             self.audit(store, actor, 'contact-stopped', str(uid))
             note = '<p class="notice">Дальнейшее общение запрещено.</p>'
         item = cfg.read(scope, target)
@@ -300,7 +300,7 @@ class Panel:
 
     @staticmethod
     def audit(store, actor, action, target=''):
-        from storage import utc_now
+        from clock_utils import utc_now
         with store.db:
             store.db.execute('INSERT INTO panel_audit(actor,action,target,at) VALUES(?,?,?,?)', (actor, action, target, utc_now()))
 
@@ -335,3 +335,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+from conversation_service import ConversationState

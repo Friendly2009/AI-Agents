@@ -2,7 +2,8 @@
 import json, os, sqlite3
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from outgoing import safe_mode, send_once
+from runtime_policy import safe_mode
+from outgoing import send_once
 
 class Manager:
     def __init__(self, path=None):
@@ -38,8 +39,7 @@ class Manager:
         return self
     def control(self):
         if self.store is None:
-            from storage import Store
-            self.store = Store(':memory:' if self.path == ':memory:' else str(Path(self.path).parent / 'softskills.db'), legacy_manager_path=None if self.path == ':memory:' else self.path)
+            raise RuntimeError('Manager must be bound to an explicit Store')
         return self.store.control
     def handoff(self,uid,active=True):
         control = self.control()
@@ -114,13 +114,15 @@ class Manager:
         return (Funnel(store).report()+f'\nLLM: {calls} запросов, {u[0]} ответов с usage; токены вход/выход: {u[1]}/{u[2]}; стоимость: {cost}. '
                 f'API на подтверждённое посещение: {per}. Учтены текстовые запросы консультаций, приглашений и распоряжений; голосовой API и другие расходы исключены.')
 
-M=Manager()
+
 
 def knowledge():
     p=Path(__file__).parent/'knowledge.json'
     return json.loads(p.read_text(encoding='utf-8'))
 
-async def commands(client,event,store,admin=False):
+async def commands(client,event,store,admin=False, *, manager=None, learning=None):
+    M = manager
+    LEARNING = learning
     text=(event.raw_text or '').strip();uid=event.sender_id
     if not text.startswith('/'):return False
     command,*rest=text.split(maxsplit=1); arg=rest[0] if rest else ''
@@ -143,7 +145,6 @@ async def commands(client,event,store,admin=False):
                 target,outcome,reference=arg.split(maxsplit=2)
                 Funnel(store).confirm(int(target),outcome,uid,reference)
                 if outcome in {'trial_attended','trial_missed'}:
-                    from sales_learning import LEARNING
                     LEARNING.mark_user(int(target),'attended' if outcome=='trial_attended' else 'missed',uid)
                 answer='Результат подтверждён сотрудником; источник и ID подтверждения сохранены.'
         elif command=='/оценка':
@@ -151,7 +152,6 @@ async def commands(client,event,store,admin=False):
             from funnel import Funnel
             require_admin(uid)
             interaction,score=map(int,arg.split())
-            from sales_learning import LEARNING
             if not 1<=score<=5 or not LEARNING.db.execute('SELECT 1 FROM interactions WHERE id=?',(interaction,)).fetchone():
                 raise ValueError('Нужны ID ответа и оценка 1–5')
             with store.db:
@@ -206,14 +206,14 @@ async def commands(client,event,store,admin=False):
                 from funnel import Funnel
                 with store.db:
                     Funnel(store).emit(uid,'trial_requested',reliability='intent',confirmation='booking_command')
-                bid=M.book(uid,int(arg)); b=M.booking(bid); store.update(uid,wants_trial=1,city=b['city'],course=b['course'],wanted_time=b['starts'])
+                bid=M.book(uid,int(arg)); b=M.booking(bid); ConversationState(store).update(uid,wants_trial=1,city=b['city'],course=b['course'],wanted_time=b['starts'])
                 answer=f'Предварительная бронь #{bid}. Место в локальном расписании зарезервировано, менеджер подтвердит запись. Напоминание по желанию: /напомнить {bid}. Отмена: /отмена {bid}.'
                 for aid in __import__('director_orders').admin_ids(0):
                     if safe_mode(): continue
                     try:await client.send_message(aid,f'Новая бронь #{bid}, клиент ID {uid}. /брони')
                     except Exception:pass
         elif command=='/согласие_на_запись':
-            store.ensure(uid);store.update(uid,crm_consent=1);answer='Согласие на обработку данных для записи и передачу заявки в CRM Soft Skills сохранено.'
+            store.ensure(uid);ConversationState(store).update(uid,crm_consent=1);answer='Согласие на обработку данных для записи и передачу заявки в CRM Soft Skills сохранено.'
         elif command=='/отмена':M.set_booking(int(arg),'cancelled',uid);answer='Бронь отменена, место освобождено.'
         elif command=='/напомнить':M.remind(int(arg),uid);answer='Отправим одно напоминание в течение суток перед подтверждённым занятием. Отмена уведомлений: /стоп.'
         elif command in {'/подтвердить_бронь','/отменить_бронь','/посещение','/пропуск'}:
@@ -231,7 +231,6 @@ async def commands(client,event,store,admin=False):
             store.ensure(b['uid'])
             store.set_dialogue(b['uid'], stage={'confirmed':'visit_confirmed','cancelled':'declined','attended':'attended','missed':'declined'}[status], application_status=status)
             if status in {'attended','missed'}:
-                from sales_learning import LEARNING
                 LEARNING.mark_user(b['uid'], status, uid)
             await send_once(store, f"booking:{b['id']}:{status}", b['uid'],
                 lambda: client.send_message(b['uid'],f"Бронь #{arg}: { {'confirmed':'подтверждена менеджером','cancelled':'отменена менеджером','attended':'посещение подтверждено сотрудником','missed':'пропуск подтверждён сотрудником'}[status] }. {b['course']}",parse_mode=None))
@@ -244,3 +243,5 @@ async def commands(client,event,store,admin=False):
         await event.reply(answer[:3900]);return True
     except (ValueError,TypeError,PermissionError):
         await event.reply('Проверьте параметры команды. Для руководителя: /менеджер_помощь');return True
+
+from conversation_service import ConversationState

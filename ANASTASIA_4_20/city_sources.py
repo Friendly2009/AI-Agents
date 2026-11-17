@@ -323,3 +323,4 @@ async def search_telegram_sources(client, category='все', *, query_limit=8,
     stats.update({'queries':len(logs), 'public_communities_this_scan':len(seen), 'errors':
                   sum(1 for l in logs if 'error' in l), 'details':logs})
     return stats
+

@@ -135,7 +135,7 @@ class Invitations:
                 ok=await self.ledger.deliver(row['id'],lambda: self.client.send_message(uid,row['body'],parse_mode=None),safe=self.safe())
                 if ok:
                     self.store.ensure(uid,source='Подтверждённый список')
-                    self.store.add_turn(uid,'assistant',row['body'])
+                    ConversationState(self.store).add_turn(uid,'assistant',row['body'])
                     if row['kind']=='initial': self.store.mark_sent(uid,'Подтверждено Telegram')
                     sent+=1
                 else: skipped+=1
@@ -145,3 +145,5 @@ class Invitations:
         except Exception:
             import logging
             logging.getLogger(__name__).warning('queue_result_notification_failed')
+
+from conversation_service import ConversationState

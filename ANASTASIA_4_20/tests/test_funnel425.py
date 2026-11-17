@@ -59,13 +59,13 @@ def test_events_full_schema(live):
     assert live.db.execute('SELECT COUNT(*) FROM funnel_events WHERE occurred_at IS NULL OR source IS NULL').fetchone()[0]==0
 
 def test_contact_lifecycle_and_delete(live):
-    live.update(7,ai_consent=1)
-    assert live.claim_inbound(7,1,'Вопрос')
-    assert not live.claim_inbound(7,1,'Вопрос')
-    live.add_turn(7,'assistant','Ответ')
-    live.claim_inbound(7,2,'Спасибо')
-    live.recording_consent(7,True)
-    live.submitted(7,55,'key')
+    ConversationState(live).update(7,ai_consent=1)
+    assert ConversationState(live).claim_inbound(7,1,'Вопрос')
+    assert not ConversationState(live).claim_inbound(7,1,'Вопрос')
+    ConversationState(live).add_turn(7,'assistant','Ответ')
+    ConversationState(live).claim_inbound(7,2,'Спасибо')
+    ConversationState(live).recording_consent(7,True)
+    ConversationState(live).submitted(7,55,'key')
     c=Funnel(live).counts()
     assert all(c[e]==1 for e in ('contact_authorized','conversation_started','client_replied','trial_requested','lead_created'))
     live.erase(7)
@@ -177,3 +177,5 @@ def test_conversion_uses_same_clients_and_time(live):
         Funnel(live).emit(7,'trial_confirmed',reliability='human',actor_id=101)
         Funnel(live).emit(8,'trial_attended',reliability='human',actor_id=101)
     assert 'trial_confirmed → trial_attended: 0.0% (0/1)' in Funnel(live).report()
+
+from conversation_service import ConversationState

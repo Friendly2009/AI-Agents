@@ -14,16 +14,18 @@ class Reliability(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(requests_handoff('Да',[{'role':'assistant','content':'Хотите, чтобы я связала вас с менеджером прямо сейчас?'}]))
         self.assertFalse(requests_handoff('Да',[{'role':'assistant','content':'Хотите узнать стоимость?'}]))
     async def test_delivery(self):
-        m=Manager(':memory:');n=AsyncMock(return_value=2)
+        m=Manager(':memory:').bind(Store(':memory:'));n=AsyncMock(return_value=2)
         r=await transfer_to_managers(None,n,m,1,{'username':'parent_test'},'Да',[{'role':'user','content':'Можно родителю?'}])
         self.assertTrue(m.paused(1));self.assertIn('Передала',r)
         self.assertIn('https://t.me/parent_test',n.call_args.args[1]);self.assertIn('Можно родителю?',n.call_args.args[1])
     async def test_failure(self):
         for n in [AsyncMock(return_value=0),AsyncMock(side_effect=RuntimeError('offline'))]:
-            m=Manager(':memory:');r=await transfer_to_managers(None,n,m,1,{},'Да',[])
+            m=Manager(':memory:').bind(Store(':memory:'));r=await transfer_to_managers(None,n,m,1,{},'Да',[])
             self.assertEqual(m.paused(1), n.side_effect is not None)
             self.assertIn('не подтверждена',r)
     async def test_sandbox(self):
-        m=Manager(':memory:');n=AsyncMock()
+        m=Manager(':memory:').bind(Store(':memory:'));n=AsyncMock()
         r=await transfer_to_managers(None,n,m,1,{},'Да',[],True)
         self.assertFalse(m.paused(1));n.assert_not_called();self.assertIn('Тест:',r)
+
+from storage import Store

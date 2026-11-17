@@ -53,7 +53,7 @@ def test_emoji_spacing_and_serious_price():
 
 def test_preferences_persist_and_delete(tmp_path):
     path=str(tmp_path/'db');s=Store(path);s.ensure(42)
-    s.update(42,speech_preferences=json.dumps(preference_updates('Пиши короче, без эмодзи')))
+    ConversationState(s).update(42,speech_preferences=json.dumps(preference_updates('Пиши короче, без эмодзи')))
     s.db.close();s=Store(path)
     state=turn_state([{'role':'user','content':'Что такое цикл?'}],BehaviorSettings(),s.get(42)['speech_preferences'])
     assert state['length']=='short' and not state['allow_emoji']
@@ -92,15 +92,16 @@ def test_wire_payload_preserves_schema():
 @pytest.mark.parametrize('text', ['Пиши короче, без рекламы', 'Спасибо, пока', 'Надоело отвечать на анкету'])
 def test_handler_does_not_replace_answer_with_recording(text):
     from contextlib import asynccontextmanager
-    import main
+    from app_factory import make_app
+    main = make_app()
     from manager import Manager
     from family_radar import FamilyRadar
     @asynccontextmanager
     async def action(*args): yield
     s=Store(':memory:');m=Manager(':memory:');r=FamilyRadar(':memory:')
-    s.ensure(42);s.update(42,ai_consent=1,ai_notice_shown=1,wants_trial=1,
+    s.ensure(42);ConversationState(s).update(42,ai_consent=1,ai_notice_shown=1,wants_trial=1,
                          name='Анна',phone='+79999999999',city='Александров',course='ИИ')
-    s.add_turn(42,'assistant','Что хотите уточнить?')
+    ConversationState(s).add_turn(42,'assistant','Что хотите уточнить?')
     data={k:None for k in SCHEMA['required']}
     data.update(reply='Хорошо.',wants_trial=True,handoff=False,next_action='recording',trial_decision='yes')
     model=AsyncMock(return_value=data)
@@ -140,3 +141,5 @@ def test_learning_available_for_actual_selection():
     prompt,inputs,_=build_prompt([{'role':'user','content':'Посоветуйте, что выбрать'}],facts={},orders='',slots=[],offer='',learning_note='OPTIONAL_ADVICE',settings=BehaviorSettings())
     assert 'OPTIONAL_ADVICE' not in prompt
     assert any('OPTIONAL_ADVICE' in item['content'] for item in inputs)
+
+from conversation_service import ConversationState

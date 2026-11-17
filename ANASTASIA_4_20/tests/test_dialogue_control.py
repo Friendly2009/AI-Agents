@@ -19,7 +19,7 @@ from handoff_flow import transfer_to_managers, reply_to_handoff
 def setup(store, monkeypatch):
     monkeypatch.setenv('SAFE_TEST_MODE', 'false')
     store.ensure(42)
-    store.update(42, ai_consent=1, ai_notice_shown=1)
+    ConversationState(store).update(42, ai_consent=1, ai_notice_shown=1)
     manager = Manager(':memory:').bind(store)
     client = GuardedTelegramClient(None, 123, '0'*32)
     client.configure_delivery(store, {99}, manager)
@@ -32,7 +32,8 @@ def setup(store, monkeypatch):
     async def action(*args):
         yield
     monkeypatch.setattr(client, 'action', action)
-    import main
+    from app_factory import make_app
+    main = make_app()
     for name, value in dict(STORE=store, M=manager, TESTERS=set(), CHAT_LOCKS={}).items():
         monkeypatch.setattr(main, name, value)
     monkeypatch.setattr(main.RADAR, 'get', lambda uid: None)
@@ -72,7 +73,7 @@ def test_success_duplicate_and_block(tmp_path, monkeypatch):
     store.db.close()
     reopened = Store(str(tmp_path/'state.db'))
     assert reopened.control.blocked(42)
-    assert reopened.control.acknowledgement(42)
+    assert HandoffAcknowledgement(reopened).acknowledgement(42)
     assert reopened.db.execute("SELECT state FROM outbound_operations WHERE kind='handoff_ack' AND id!='forged'").fetchone()[0] == 'sent'
     reopened.db.close()
 
@@ -81,10 +82,10 @@ def test_success_duplicate_and_block(tmp_path, monkeypatch):
 def test_all_resume_handlers(tmp_path, monkeypatch, method):
     store = Store(str(tmp_path/'state.db'))
     main, client, manager, raw = setup(store, monkeypatch)
-    store.claim_inbound(42, 1, 'вопрос')
+    ConversationState(store).claim_inbound(42, 1, 'вопрос')
     store.control.takeover(42)
     store.set_dialogue(42, paused=True, declined=True)
-    store.update(42, stopped=1)
+    ConversationState(store).update(42, stopped=1)
     async def run():
         if method == '/вернуть_ии':
             from manager import commands
@@ -104,7 +105,7 @@ def test_all_resume_handlers(tmp_path, monkeypatch, method):
 def test_notification_failure(tmp_path, monkeypatch, failure):
     store = Store(str(tmp_path/'state.db'))
     main, client, manager, raw = setup(store, monkeypatch)
-    store.claim_inbound(42, 1, 'позовите менеджера')
+    ConversationState(store).claim_inbound(42, 1, 'позовите менеджера')
     async def notify(*args):
         if failure == 'uncertain':
             raise TimeoutError()
@@ -113,7 +114,7 @@ def test_notification_failure(tmp_path, monkeypatch, failure):
         reply = await transfer_to_managers(client, notify, manager, 42, {}, 'позовите менеджера', [], store=store)
         assert reply != ACK
         await reply_to_handoff(store, 42, reply, event(client, '').reply)
-        assert not store.control.acknowledgement(42)
+        assert not HandoffAcknowledgement(store).acknowledgement(42)
         assert all(c.args[1] != ACK for c in raw.call_args_list)
         assert store.control.blocked(42) == (failure == 'uncertain')
         assert not store.control.begin(42, 1)  # Same failed event is never retried.
@@ -159,7 +160,7 @@ def test_restart_during_notification(tmp_path, monkeypatch):
     asyncio.run(main.handle_dm(client, event(client, 'позовите менеджера')))
     assert raw.await_count == 0
     assert store.control.blocked(42)
-    assert not store.control.acknowledgement(42)
+    assert not HandoffAcknowledgement(store).acknowledgement(42)
     store.db.close()
 
 
@@ -186,7 +187,7 @@ def test_takeover_while_model_running(tmp_path, monkeypatch, resume_during_gener
 def test_policy_rechecks_after_entity_resolution(tmp_path, monkeypatch):
     store = Store(str(tmp_path/'state.db'))
     main, client, manager, raw = setup(store, monkeypatch)
-    store.claim_inbound(42, 1, 'вопрос')
+    ConversationState(store).claim_inbound(42, 1, 'вопрос')
     ledger = Ledger(store)
     ledger.prepare('reply', 42, 'reply', 'test', 'Ответ')
     assert ledger.validate('reply') and ledger.approve('reply')
@@ -214,7 +215,7 @@ def test_migration_conflicts_and_idempotence(tmp_path):
     db.commit(); db.close()
     store = Store(str(tmp_path/'state.db'))
     assert [store.control.get(i)['state'] for i in range(1,6)] == ['human','human','human','review','ai']
-    assert all(not store.control.acknowledgement(i) for i in range(1,6))
+    assert all(not HandoffAcknowledgement(store).acknowledgement(i) for i in range(1,6))
     before = list(manager.execute('SELECT * FROM handoffs'))
     store.control.resume(1)
     store.db.close()
@@ -240,15 +241,15 @@ def test_restart_after_receipt_before_ack(tmp_path, monkeypatch):
     path = str(tmp_path/'state.db')
     store = Store(path)
     store.ensure(42)
-    store.claim_inbound(42, 1, 'позовите менеджера')
+    ConversationState(store).claim_inbound(42, 1, 'позовите менеджера')
     key = store.control.begin(42, 1)
     store.control.finish(42, key, 1)
     store.db.close()
     store = Store(path)
     main, client, manager, raw = setup(store, monkeypatch)
     async def run():
-        assert await store.control.confirm(42, lambda: client.send_message(42, ACK), safe=False)
-        assert not await store.control.confirm(42, lambda: client.send_message(42, ACK), safe=False)
+        assert await HandoffAcknowledgement(store).confirm(42, lambda: client.send_message(42, ACK), safe=False)
+        assert not await HandoffAcknowledgement(store).confirm(42, lambda: client.send_message(42, ACK), safe=False)
     asyncio.run(run())
     assert raw.await_count == 1
     store.db.close()
@@ -257,12 +258,12 @@ def test_restart_after_receipt_before_ack(tmp_path, monkeypatch):
 def test_ack_capability_cannot_send_model_text(tmp_path, monkeypatch):
     store = Store(str(tmp_path/'state.db'))
     main, client, manager, raw = setup(store, monkeypatch)
-    store.claim_inbound(42, 1, 'вопрос')
+    ConversationState(store).claim_inbound(42, 1, 'вопрос')
     key = store.control.begin(42, 1)
     store.control.finish(42, key, 1)
     async def run():
         with pytest.raises(PolicyBlocked):
-            await store.control.confirm(42, lambda: client.send_message(42, 'Произвольный ответ модели'), safe=False)
+            await HandoffAcknowledgement(store).confirm(42, lambda: client.send_message(42, 'Произвольный ответ модели'), safe=False)
     asyncio.run(run())
     assert raw.await_count == 0
     store.db.close()
@@ -281,5 +282,9 @@ def test_full_handler_notification_failure(tmp_path, monkeypatch, uncertain):
     assert all(c.args[1] != ACK for c in raw.call_args_list)
     assert raw.await_count == (1 if uncertain else 2)
     assert manager.paused(42) == uncertain
-    assert not store.control.acknowledgement(42)
+    assert not HandoffAcknowledgement(store).acknowledgement(42)
     store.db.close()
+
+from handoff_ack import HandoffAcknowledgement
+
+from conversation_service import ConversationState

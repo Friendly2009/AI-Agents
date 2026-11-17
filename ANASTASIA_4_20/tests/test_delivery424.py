@@ -21,7 +21,7 @@ def store():
 def approved(s,key='one',uid=42,kind='initial',batch='batch'):
     l=Ledger(s)
     if kind=='initial': l.grant(uid,'signed-form:123',date.today().isoformat())
-    else: s.claim_inbound(uid,1,'вопрос')
+    else: ConversationState(s).claim_inbound(uid,1,'вопрос')
     l.prepare(key,uid,kind,'test',greeting('Анна'),batch)
     assert l.validate(key)
     assert l.approve(key)
@@ -131,7 +131,7 @@ def test_journal_minimal_structured_data(store):
 
 def test_handoff_and_campaign_no_reply(store):
     l=approved(store);assert l.check(42,'campaign')=='no_recipient_response'
-    store.claim_inbound(42,1,'да');assert not l.check(42,'campaign')
+    ConversationState(store).claim_inbound(42,1,'да');assert not l.check(42,'campaign')
     store.control.takeover(42)
     assert l.check(42,'reply')=='human_handoff';assert l.check(42,'initial')=='human_handoff'
 
@@ -151,7 +151,7 @@ def test_client_boundary_raw_reply_and_handoff(store,monkeypatch):
         client,m,raw=await make_guard(store,monkeypatch)
         try:
             with pytest.raises(PolicyBlocked): await client.send_message(42,'cold')
-            store.claim_inbound(42,1,'да')
+            ConversationState(store).claim_inbound(42,1,'да')
             assert (await client.send_message(42,'ответ')).id==17;assert raw.await_count==1
             with pytest.raises(PolicyBlocked): await client.send_message(42,'ответ')
             m.handoff(42)
@@ -168,7 +168,7 @@ def test_event_reply_uses_client_boundary(store,monkeypatch):
             from telethon.tl.custom.message import Message
             event=Message(id=12,peer_id=types.PeerUser(42),message='вопрос');event._client=client;event._input_chat=types.InputPeerUser(42,0)
             with pytest.raises(PolicyBlocked): await event.reply('no context')
-            store.claim_inbound(42,12,'вопрос');await event.reply('ответ');assert raw.await_count==1
+            ConversationState(store).claim_inbound(42,12,'вопрос');await event.reply('ответ');assert raw.await_count==1
         finally: m.db.close()
     run(scenario())
 
@@ -183,7 +183,7 @@ def test_client_safe_blocks_admin(store,monkeypatch):
     run(scenario())
 
 def test_send_once_does_not_double_reserve(store,monkeypatch):
-    monkeypatch.setenv('SAFE_TEST_MODE','false');store.claim_inbound(42,1,'да')
+    monkeypatch.setenv('SAFE_TEST_MODE','false');ConversationState(store).claim_inbound(42,1,'да')
     async def scenario():
         client,m,raw=await make_guard(store,monkeypatch)
         try:
@@ -209,7 +209,7 @@ def test_admin_prepare_exclude_confirm_restore(store):
     run(scenario())
 
 def test_legacy_effect_is_never_replayed(store):
-    store.claim_inbound(42,1,'hello')
+    ConversationState(store).claim_inbound(42,1,'hello')
     assert store.claim_effect('old-reminder')
     send=AsyncMock()
     assert not run(send_once(store,'old-reminder',42,send,lambda:False))
@@ -233,11 +233,11 @@ def test_automated_outgoing_is_not_a_manual_opening(store):
     finally: m.db.close()
 
 def test_campaign_requires_reply_after_initial_attempt(store):
-    store.claim_inbound(42,1,'registration')
+    ConversationState(store).claim_inbound(42,1,'registration')
     l=approved(store)
     assert run(l.deliver('one',AsyncMock(),safe=False))
     assert l.check(42,'campaign')=='no_recipient_response'
-    store.claim_inbound(42,2,'да')
+    ConversationState(store).claim_inbound(42,2,'да')
     assert not l.check(42,'campaign')
 
 def test_manual_without_username_continues_on_short_reply(store,monkeypatch):
@@ -246,7 +246,7 @@ def test_manual_without_username_continues_on_short_reply(store,monkeypatch):
     try:
         assert remember_opening(store,m,42,'Что вас интересует?',username='')
         assert not remember_opening(store,m,42,'Что вас интересует?',username='')
-        store.claim_inbound(42,1,'да')
+        ConversationState(store).claim_inbound(42,1,'да')
         assert not Ledger(store).check(42,'reply')
         assert len(store.history(42))==1
     finally: m.db.close()
@@ -277,3 +277,5 @@ def test_long_campaign_preview_is_complete_and_chunked(store,monkeypatch):
         assert ''.join(chunks).count('x'*1100)==10
         assert len(q.rows(100))==10
     run(scenario())
+
+from conversation_service import ConversationState

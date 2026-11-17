@@ -149,7 +149,7 @@ def test_global_pause_and_outbound_permission_enforced(store):
 
 def test_personal_configuration_erased_without_other_history(store):
     store.ensure(42); store.ensure(43)
-    store.add_turn(43, 'user', 'Сохранить')
+    ConversationState(store).add_turn(43, 'user', 'Сохранить')
     cfg = store.configuration()
     cfg.save(101, 'client', '42', payload(prompt='Личные данные'), 0)
     store.erase(42)
@@ -265,3 +265,5 @@ def test_operations_use_existing_manager(browser, store, tmp_path):
     assert browser.request(dict(action='stop', csrf=browser.csrf, uid=42))[0].startswith('200')
     assert store.get(42)['stopped'] == 1
     manager.db.close()
+
+from conversation_service import ConversationState

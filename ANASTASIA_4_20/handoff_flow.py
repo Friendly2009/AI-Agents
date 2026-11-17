@@ -43,11 +43,11 @@ async def transfer_to_managers(client, notify, manager, uid, contact, text, hist
 
 
 async def reply_to_handoff(store, uid, reply, send, testing=False):
-    from outgoing import safe_mode
+    from runtime_policy import safe_mode
     if testing:
         return await send(reply)
     if reply == ACK:
-        return await store.control.confirm(uid, lambda: send(ACK), safe=safe_mode())
+        return await HandoffAcknowledgement(store).confirm(uid, lambda: send(ACK), safe=safe_mode())
     if not store.control.blocked(uid):
         return await send(reply)
     return False
@@ -59,3 +59,5 @@ def original_question(text, history):
         if item.get('role') == 'user' and ('?' in value or re.search(r'сколько|могут|можно ли|стоимость', value, re.I)):
             return value
     return next((m['content'] for m in reversed(history) if m.get('role') == 'user' and len(m.get('content', '')) > 15), text)
+
+from handoff_ack import HandoffAcknowledgement

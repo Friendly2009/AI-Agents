@@ -17,7 +17,7 @@ def lead_summary(contact, status):
 
 
 async def deliver_lead(client, store, contact, recipients, status):
-    from outgoing import safe_mode
+    from runtime_policy import safe_mode
     if safe_mode() or getattr(store,'analytics_test',False):
         return {recipient:'simulated' for recipient in recipients}
     recipients = set(recipients)
