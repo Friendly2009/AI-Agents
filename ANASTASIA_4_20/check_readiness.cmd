@@ -16,6 +16,7 @@ if errorlevel 1 (
 )
 echo Checking configuration offline...
 %PYTHON_CMD% doctor.py
+set "RESULT=%ERRORLEVEL%"
 if errorlevel 1 (
     echo.
     echo ERROR: The command failed. Please send a screenshot of this window, without secrets.
@@ -24,3 +25,4 @@ if errorlevel 1 (
     echo Done.
 )
 pause
+exit /b %RESULT%

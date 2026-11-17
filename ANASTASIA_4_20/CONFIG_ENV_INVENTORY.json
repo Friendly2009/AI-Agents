@@ -1,0 +1,476 @@
+[
+  {
+    "file": "admin_panel.py",
+    "line": 57,
+    "name": "'OPENAI_API_KEY'",
+    "default": null
+  },
+  {
+    "file": "admin_panel.py",
+    "line": 58,
+    "name": "'TG_API_ID'",
+    "default": null
+  },
+  {
+    "file": "admin_panel.py",
+    "line": 58,
+    "name": "'TG_API_HASH'",
+    "default": null
+  },
+  {
+    "file": "admin_panel.py",
+    "line": 60,
+    "name": "'ALFACRM_ALEX_URL'",
+    "default": null
+  },
+  {
+    "file": "admin_panel.py",
+    "line": 60,
+    "name": "'ALFACRM_ALEX_EMAIL'",
+    "default": null
+  },
+  {
+    "file": "admin_panel.py",
+    "line": 60,
+    "name": "'ALFACRM_ALEX_API_KEY'",
+    "default": null
+  },
+  {
+    "file": "admin_panel.py",
+    "line": 61,
+    "name": "'ALFACRM_YARO_URL'",
+    "default": null
+  },
+  {
+    "file": "admin_panel.py",
+    "line": 61,
+    "name": "'ALFACRM_YARO_EMAIL'",
+    "default": null
+  },
+  {
+    "file": "admin_panel.py",
+    "line": 61,
+    "name": "'ALFACRM_YARO_API_KEY'",
+    "default": null
+  },
+  {
+    "file": "admin_panel.py",
+    "line": 63,
+    "name": "'SAFE_TEST_MODE'",
+    "default": "'true'"
+  },
+  {
+    "file": "admin_panel.py",
+    "line": 59,
+    "name": "'CRM_ENABLED'",
+    "default": "'false'"
+  },
+  {
+    "file": "agent_config.py",
+    "line": 37,
+    "name": "'AGENT_NAME'",
+    "default": "'Анастасия Владимировна'"
+  },
+  {
+    "file": "agent_config.py",
+    "line": 38,
+    "name": "'OPENAI_MODEL'",
+    "default": "'gpt-5-mini'"
+  },
+  {
+    "file": "agent_config.py",
+    "line": 42,
+    "name": "'AGENT_LANGUAGES'",
+    "default": "'ru,en'"
+  },
+  {
+    "file": "autojoin.py",
+    "line": 41,
+    "name": "name",
+    "default": "str(default)"
+  },
+  {
+    "file": "autojoin.py",
+    "line": 36,
+    "name": "name",
+    "default": "'true' if default else 'false'"
+  },
+  {
+    "file": "brain.py",
+    "line": 38,
+    "name": "'OPENAI_MODEL'",
+    "default": "'gpt-5-mini'"
+  },
+  {
+    "file": "brain.py",
+    "line": 53,
+    "name": "'OPENAI_API_KEY'",
+    "default": "required"
+  },
+  {
+    "file": "campaigns.py",
+    "line": 96,
+    "name": "'AGENT_NAME'",
+    "default": "'Анастасия Владимировна'"
+  },
+  {
+    "file": "campaigns.py",
+    "line": 113,
+    "name": "'OPENAI_MODEL'",
+    "default": "'gpt-5-mini'"
+  },
+  {
+    "file": "campaigns.py",
+    "line": 111,
+    "name": "'OPENAI_API_KEY'",
+    "default": "required"
+  },
+  {
+    "file": "campaigns.py",
+    "line": 132,
+    "name": "'OPENAI_MODEL'",
+    "default": "'gpt-5-mini'"
+  },
+  {
+    "file": "campaigns.py",
+    "line": 115,
+    "name": "'OPENAI_MODEL'",
+    "default": "'gpt-5-mini'"
+  },
+  {
+    "file": "conversation_style.py",
+    "line": 35,
+    "name": "'ANASTASIA_' + k.upper()",
+    "default": "required"
+  },
+  {
+    "file": "crm.py",
+    "line": 23,
+    "name": "f'ALFACRM_{suffix}_EMAIL'",
+    "default": "''"
+  },
+  {
+    "file": "crm.py",
+    "line": 24,
+    "name": "f'ALFACRM_{suffix}_API_KEY'",
+    "default": "''"
+  },
+  {
+    "file": "crm.py",
+    "line": 25,
+    "name": "f'ALFACRM_{suffix}_BRANCH'",
+    "default": "''"
+  },
+  {
+    "file": "crm.py",
+    "line": 26,
+    "name": "f'ALFACRM_{suffix}_LEAD_SOURCE'",
+    "default": "''"
+  },
+  {
+    "file": "crm.py",
+    "line": 22,
+    "name": "f'ALFACRM_{suffix}_URL'",
+    "default": "''"
+  },
+  {
+    "file": "delivery.py",
+    "line": 149,
+    "name": "'INITIAL_DAILY_LIMIT'",
+    "default": "'3'"
+  },
+  {
+    "file": "director_orders.py",
+    "line": 131,
+    "name": "'DIRECTOR_MODEL'",
+    "default": "os.getenv('OPENAI_MODEL', 'gpt-5-mini')"
+  },
+  {
+    "file": "director_orders.py",
+    "line": 129,
+    "name": "'OPENAI_API_KEY'",
+    "default": null
+  },
+  {
+    "file": "director_orders.py",
+    "line": 131,
+    "name": "'OPENAI_MODEL'",
+    "default": "'gpt-5-mini'"
+  },
+  {
+    "file": "director_orders.py",
+    "line": 154,
+    "name": "'DIRECTOR_MODEL'",
+    "default": "os.getenv('OPENAI_MODEL', 'gpt-5-mini')"
+  },
+  {
+    "file": "director_orders.py",
+    "line": 269,
+    "name": "'ADMIN_OWNER_TG_ID'",
+    "default": "''"
+  },
+  {
+    "file": "director_orders.py",
+    "line": 270,
+    "name": "'ADMIN_WIFE_TG_ID'",
+    "default": "''"
+  },
+  {
+    "file": "director_orders.py",
+    "line": 125,
+    "name": "'OPENAI_API_KEY'",
+    "default": "''"
+  },
+  {
+    "file": "director_orders.py",
+    "line": 133,
+    "name": "'DIRECTOR_MODEL'",
+    "default": "os.getenv('OPENAI_MODEL', 'gpt-5-mini')"
+  },
+  {
+    "file": "director_orders.py",
+    "line": 154,
+    "name": "'OPENAI_MODEL'",
+    "default": "'gpt-5-mini'"
+  },
+  {
+    "file": "director_orders.py",
+    "line": 133,
+    "name": "'OPENAI_MODEL'",
+    "default": "'gpt-5-mini'"
+  },
+  {
+    "file": "doctor.py",
+    "line": 49,
+    "name": "'TG_SESSION_NAME'",
+    "default": "'anastasia_own_login'"
+  },
+  {
+    "file": "doctor.py",
+    "line": 44,
+    "name": "'ADMIN_OWNER_TG_ID'",
+    "default": "''"
+  },
+  {
+    "file": "doctor.py",
+    "line": 45,
+    "name": "'ADMIN_WIFE_TG_ID'",
+    "default": "''"
+  },
+  {
+    "file": "doctor.py",
+    "line": 41,
+    "name": "'SAFE_TEST_MODE'",
+    "default": "'true'"
+  },
+  {
+    "file": "doctor.py",
+    "line": 43,
+    "name": "name",
+    "default": "''"
+  },
+  {
+    "file": "main.py",
+    "line": 84,
+    "name": "'TG_SESSION_NAME'",
+    "default": "'anastasia_own_login'"
+  },
+  {
+    "file": "main.py",
+    "line": 92,
+    "name": "'TG_API_ID'",
+    "default": "''"
+  },
+  {
+    "file": "main.py",
+    "line": 93,
+    "name": "'TG_API_HASH'",
+    "default": "''"
+  },
+  {
+    "file": "main.py",
+    "line": 927,
+    "name": "'CITY_RADAR_QUERIES_PER_RUN'",
+    "default": "'8'"
+  },
+  {
+    "file": "main.py",
+    "line": 208,
+    "name": "'CRM_ENABLED'",
+    "default": "'false'"
+  },
+  {
+    "file": "main.py",
+    "line": 883,
+    "name": "'HISTORY_DAYS'",
+    "default": "'30'"
+  },
+  {
+    "file": "main.py",
+    "line": 79,
+    "name": "'SAFE_TEST_MODE'",
+    "default": "'true'"
+  },
+  {
+    "file": "main.py",
+    "line": 310,
+    "name": "'FAMILY_RADAR_ENABLED'",
+    "default": "'false'"
+  },
+  {
+    "file": "main.py",
+    "line": 324,
+    "name": "'FAMILY_RADAR_ENABLED'",
+    "default": "'false'"
+  },
+  {
+    "file": "main.py",
+    "line": 338,
+    "name": "'PRIVACY_POLICY_URL'",
+    "default": "''"
+  },
+  {
+    "file": "main.py",
+    "line": 529,
+    "name": "'OUTREACH_ENABLED'",
+    "default": "'false'"
+  },
+  {
+    "file": "main.py",
+    "line": 537,
+    "name": "'AUTO_DISCOVER_GROUPS'",
+    "default": "'true'"
+  },
+  {
+    "file": "main.py",
+    "line": 560,
+    "name": "'FAMILY_RADAR_OUTREACH_ENABLED'",
+    "default": "'false'"
+  },
+  {
+    "file": "main.py",
+    "line": 884,
+    "name": "'REMINDERS_ENABLED'",
+    "default": "'false'"
+  },
+  {
+    "file": "main.py",
+    "line": 313,
+    "name": "'PRIVACY_POLICY_URL'",
+    "default": "''"
+  },
+  {
+    "file": "main.py",
+    "line": 327,
+    "name": "'PRIVACY_POLICY_URL'",
+    "default": "''"
+  },
+  {
+    "file": "main.py",
+    "line": 534,
+    "name": "'OUTREACH_POLL_MINUTES'",
+    "default": "'60'"
+  },
+  {
+    "file": "main.py",
+    "line": 547,
+    "name": "'AUTO_JOIN_ENABLED'",
+    "default": "'false'"
+  },
+  {
+    "file": "main.py",
+    "line": 556,
+    "name": "'AUTO_JOIN_POLL_MINUTES'",
+    "default": "'240'"
+  },
+  {
+    "file": "main.py",
+    "line": 565,
+    "name": "'OUTREACH_POLL_MINUTES'",
+    "default": "'60'"
+  },
+  {
+    "file": "main.py",
+    "line": 992,
+    "name": "'TG_PHONE'",
+    "default": "''"
+  },
+  {
+    "file": "main.py",
+    "line": 639,
+    "name": "'OPENAI_API_KEY'",
+    "default": "''"
+  },
+  {
+    "file": "main.py",
+    "line": 158,
+    "name": "'OPENAI_API_KEY'",
+    "default": "''"
+  },
+  {
+    "file": "main.py",
+    "line": 165,
+    "name": "'VOICE_TRANSCRIPTION_MODEL'",
+    "default": "'whisper-1'"
+  },
+  {
+    "file": "main.py",
+    "line": 164,
+    "name": "'OPENAI_API_KEY'",
+    "default": "required"
+  },
+  {
+    "file": "manager.py",
+    "line": 81,
+    "name": "'API_INPUT_USD_PER_MILLION'",
+    "default": "''"
+  },
+  {
+    "file": "manager.py",
+    "line": 81,
+    "name": "'API_OUTPUT_USD_PER_MILLION'",
+    "default": "''"
+  },
+  {
+    "file": "manager.py",
+    "line": 82,
+    "name": "'OPENAI_MODEL'",
+    "default": "'gpt-5-mini'"
+  },
+  {
+    "file": "manager.py",
+    "line": 85,
+    "name": "'API_PRICES_JSON'",
+    "default": "'{}'"
+  },
+  {
+    "file": "outgoing.py",
+    "line": 6,
+    "name": "'SAFE_TEST_MODE'",
+    "default": "'true'"
+  },
+  {
+    "file": "render_panel_demo.py",
+    "line": 14,
+    "name": "'PATH'",
+    "default": "''"
+  },
+  {
+    "file": "simulate_delivery.py",
+    "line": 13,
+    "name": "'INITIAL_DAILY_LIMIT'",
+    "default": null
+  },
+  {
+    "file": "simulate_delivery.py",
+    "line": 14,
+    "name": "'INITIAL_DAILY_LIMIT'",
+    "default": "required"
+  },
+  {
+    "file": "simulate_delivery.py",
+    "line": 33,
+    "name": "'INITIAL_DAILY_LIMIT'",
+    "default": "required"
+  }
+]

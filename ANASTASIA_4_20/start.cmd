@@ -14,7 +14,7 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-echo Running Anastasia 4.24 DELIVERY - mode is read from .env...
+echo Running Anastasia 4.26 RC1 - mode is read from .env...
 %PYTHON_CMD% main.py listen
 if errorlevel 1 (
     echo.

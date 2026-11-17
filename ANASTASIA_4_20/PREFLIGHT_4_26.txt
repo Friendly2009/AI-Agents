@@ -1,0 +1,21 @@
+ANASTASIA 4.26 RC1 — OFFLINE READINESS CHECK
+Telegram network access: NONE. No outgoing messages.
+dotenv: MISSING (.env.example -> .env)
+Safe mode: ON
+TG_API_ID not set
+TG_API_HASH not set
+OPENAI_API_KEY present
+ADMIN_OWNER_TG_ID not set
+ADMIN_WIFE_TG_ID not set
+Two independent director accounts: LOCKED (set both numeric Telegram IDs)
+New session name: anastasia_own_login (under data/sessions; no seller session import)
+Package telethon installed
+Package dotenv installed
+Package openai installed
+Vendor session files in project root: none
+Ready for first test only when account ownership/authorization is legitimate.
+ERROR: TG_API_ID: positive numeric ID required
+ERROR: ADMIN_OWNER_TG_ID: positive numeric ID required
+ERROR: ADMIN_WIFE_TG_ID: positive numeric ID required
+ERROR: Two distinct administrator IDs required
+ERROR: TG_API_HASH: 32 hexadecimal characters required
