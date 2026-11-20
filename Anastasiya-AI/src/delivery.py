@@ -201,6 +201,27 @@ class GuardedTelegramClient(TelegramClient):
                     self.delivery.event('telegram_restricted','rpc','rpc','restricted',code,'telegram_client')
             raise
 
+    async def reply_to_saved_command(self, message_id, text):
+        uid = self.saved_messages_user_id
+        if not uid:
+            raise PolicyBlocked('session_user_unknown')
+        digest = hashlib.sha256(text.encode()).hexdigest()[:24]
+        key = f'saved_reply:{uid}:{message_id}:{digest}'
+        ledger = self.delivery
+        ledger.prepare(key, uid, 'admin', 'saved_messages')
+        if ledger.row(key)['state'] == 'sent':
+            return
+        ledger.validate(key)
+        ledger.approve(key)
+
+        async def send():
+            # Fixed destination: this operation can only reply to our own Saved Messages.
+            return await super(GuardedTelegramClient, self).send_message(
+                'me', text, reply_to=message_id, parse_mode=None)
+
+        if not await ledger.deliver(key, send, safe=False):
+            raise PolicyBlocked(ledger.row(key).get('error') or ledger.row(key)['state'])
+
     async def send_message(self,entity,message='',*args,**kwargs):
         peer=await self.get_input_entity(entity)
         uid=utils.get_peer_id(peer)

@@ -24,6 +24,9 @@ LOG = logging.getLogger('softskills')
 
 
 async def director_reply(app, client, event, text):
+    if safe_test_mode() and event.out and event.is_private and event.chat_id == client.saved_messages_user_id:
+        await client.reply_to_saved_command(event.id, text[:4000])
+        return
     if event.chat_id == (await client.get_me()).id:
         await app.notice_owner(client, text)
     else:
@@ -200,6 +203,7 @@ async def listen(app, client):
                     LOG.exception('Ошибка отправки по зарегистрированным семьям')
             await asyncio.sleep(max(15,int(os.getenv('OUTREACH_POLL_MINUTES','60'))) * 60)
     owner_id = (await client.get_me()).id
+    client.saved_messages_user_id = owner_id
 
     def invitation_consent(uid):
         rec = app.RADAR.get(uid)
@@ -451,6 +455,8 @@ async def listen(app, client):
                 await event.reply('Это директорский чат. Для проверки консультации: /диалог_тест. Можно написать «покажи заявки», «ты тут?» или «останови приглашения». Все команды: /помощь.')
         except Exception as exc:
             LOG.exception('Команда владельца не выполнена')
+            if safe_test_mode() and event.chat_id == owner_id:
+                return
             await app.director_reply(client,event, '⚠️ Не удалось выполнить команду: ' + type(exc).__name__)
 
     @client.on(events.NewMessage(outgoing=True))
