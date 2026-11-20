@@ -67,7 +67,8 @@ async def main(app):
         Ledger(app.STORE).recover()
         aid, ahash = settings()
         client = TelegramClient(str(session_path()), aid, ahash, flood_sleep_threshold=0,
-                                request_retries=0, auto_reconnect=False, raise_last_call_error=True)
+                                request_retries=0, auto_reconnect=(args.mode == 'listen'),
+                                connection_retries=5, retry_delay=2, raise_last_call_error=True)
         client.configure_delivery(app.STORE, app.director_admin_ids(0), app.M)
         await client.start(phone=os.getenv('TG_PHONE', '').strip() or None)
         client.configure_delivery(app.STORE, app.director_admin_ids(0) | {(await client.get_me()).id}, app.M)
