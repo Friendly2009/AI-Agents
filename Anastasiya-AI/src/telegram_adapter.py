@@ -24,7 +24,7 @@ LOG = logging.getLogger('softskills')
 
 
 async def director_reply(app, client, event, text):
-    if safe_test_mode() and event.out and event.is_private and event.chat_id == client.saved_messages_user_id:
+    if event.out and event.is_private and event.chat_id == client.saved_messages_user_id:
         await client.reply_to_saved_command(event.id, text[:4000])
         return
     if event.chat_id == (await client.get_me()).id:
