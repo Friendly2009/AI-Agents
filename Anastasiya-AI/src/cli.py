@@ -15,7 +15,28 @@ from app_settings import safe_test_mode, session_path, settings
 BASE = Path(__file__).resolve().parents[1]
 
 
-async def main(app, *, argv=None, login=None, connected=None, authorize_only=False, unattended=False):
+class WrongTelegramAccount(Exception):
+    pass
+
+
+async def qr_login(client, display, password):
+    from telethon.errors import SessionPasswordNeededError
+    await client.connect()
+    if await client.is_user_authorized():
+        return
+    while True:
+        token = await client.qr_login()
+        display(token.url)
+        try:
+            await token.wait()
+        except TimeoutError:
+            continue
+        except SessionPasswordNeededError:
+            await client.sign_in(password=await password())
+        return
+
+
+async def main(app, *, argv=None, login=None, connected=None, authorize_only=False, unattended=False, display_qr=None):
     parser = argparse.ArgumentParser(description='Soft Skills Telegram Outreach')
     parser.add_argument('mode', choices=['listen','send-optins','send-radar','discover','retry-crm','status','preview','radar-preview','import-verified','lead-report','join-status','join-cycle'])
     parser.add_argument('--file', default='', help='CSV с документированными согласиями для import-verified')
@@ -69,13 +90,22 @@ async def main(app, *, argv=None, login=None, connected=None, authorize_only=Fal
         client = TelegramClient(str(session_path()), aid, ahash, flood_sleep_threshold=0,
                                 request_retries=0, auto_reconnect=(args.mode == 'listen'),
                                 connection_retries=5, retry_delay=2, raise_last_call_error=True)
-        client.configure_delivery(app.STORE, app.director_admin_ids(0), app.M)
+        if not (unattended or authorize_only):
+            client.configure_delivery(app.STORE, app.director_admin_ids(0), app.M)
         if unattended:
             await client.connect()
             if not await client.is_user_authorized():
                 raise RuntimeError("Telegram session requires interactive authorization")
+        elif display_qr is not None:
+            await qr_login(client, display_qr, login['password'])
         else:
             await client.start(phone=os.getenv('TG_PHONE', '').strip() or None, **(login or {}))
+        if authorize_only or unattended:
+            account = await client.get_me()
+            if getattr(account, 'phone', None) != os.environ['TG_PHONE'].lstrip('+'):
+                if authorize_only:
+                    await client.log_out()
+                raise WrongTelegramAccount()
         if authorize_only:
             return
         client.configure_delivery(app.STORE, app.director_admin_ids(0) | {(await client.get_me()).id}, app.M)

@@ -60,7 +60,7 @@ def validate(v):
             raise ValueError("Для AlfaCRM заполните данные хотя бы одного филиала.")
 
 
-async def run_agent(pipe, values, stop_event=None):
+async def run_agent(pipe, values, stop_event=None, use_qr=False):
     validate(values)
     os.environ.update(values)
     identity = hashlib.sha256(values["TG_PHONE"].encode()).hexdigest()[:12]
@@ -95,7 +95,8 @@ async def run_agent(pipe, values, stop_event=None):
 
     task = asyncio.create_task(cli.main(app, argv=["listen"], login={
         "code_callback": lambda: prompt("code"), "password": lambda: prompt("password")
-    }, connected=connected, authorize_only=pipe is not None, unattended=pipe is None))
+    }, connected=connected, authorize_only=pipe is not None, unattended=pipe is None,
+        display_qr=(lambda url: pipe.send(("qr", url))) if use_qr else None))
     try:
         while not task.done():
             if stop_event is not None and stop_event.is_set():
@@ -123,13 +124,15 @@ async def run_agent(pipe, values, stop_event=None):
             app.close()
 
 
-def worker(pipe, values):
+def worker(pipe, values, use_qr=False):
     with open(os.devnull, "w", encoding="utf-8") as sink, redirect_stdout(sink), redirect_stderr(sink):
         try:
-            asyncio.run(run_agent(pipe, values))
+            asyncio.run(run_agent(pipe, values, use_qr=use_qr))
         except (Exception, SystemExit) as exc:
             kind = type(exc).__name__
-            hints = {"ApiIdInvalidError": "Telegram отклонил API ID или API Hash.",
+            hints = {"WrongTelegramAccount": "Номер аккаунта отличается от номера в мастере. Выберите нужный аккаунт в Telegram.",
+                     "PasswordHashInvalidError": "Telegram отклонил пароль двухэтапной проверки.",
+                     "ApiIdInvalidError": "Telegram отклонил API ID или API Hash.",
                      "PhoneNumberInvalidError": "Telegram отклонил номер телефона.",
                      "FloodWaitError": "Telegram ограничил попытки входа. Повторите позже.",
                      "ConnectionError": "Проверьте подключение к Telegram.",
@@ -171,6 +174,7 @@ class Window:
         root.title("Анастасия AI")
         root.geometry("710x600")
         self.proc = None
+        self.qr_window = None
         self.pipe = None
         self.closing = False
         self.cancelling = False
@@ -191,8 +195,10 @@ class Window:
         self.page("Дополнительно", {k: k for k in DEFAULTS if k not in MAIN and k not in crm}, "")
         bar = ttk.Frame(frame)
         bar.pack(fill="x", pady=(14, 0))
-        self.start_button = ttk.Button(bar, text="Сохранить и запустить", command=self.start)
+        self.start_button = ttk.Button(bar, text="Войти по QR-коду", command=lambda: self.start(True))
         self.start_button.pack(side="left")
+        self.code_button = ttk.Button(bar, text="Войти по коду", command=self.start)
+        self.code_button.pack(side="left", padx=8)
         self.stop_button = ttk.Button(bar, text="Остановить", command=self.stop, state="disabled")
         self.stop_button.pack(side="right")
         root.protocol("WM_DELETE_WINDOW", self.close)
@@ -217,6 +223,7 @@ class Window:
                 for _, field in self.entries.values():
                     field.state(["disabled" if active else "!disabled"])
                 self.start_button.state(["disabled" if active else "!disabled"])
+                self.code_button.state(["disabled" if active else "!disabled"])
                 self.stop_button.state(["!disabled" if state == 4 else "disabled"])
             except (ValueError, OSError) as exc:
                 self.state.set(str(exc))
@@ -247,7 +254,33 @@ class Window:
             field.grid(row=row, column=1, sticky="ew")
             self.entries[key] = (value, field)
 
-    def start(self):
+    def hide_qr(self):
+        if self.qr_window is not None:
+            self.qr_window.destroy()
+            self.qr_window = None
+
+    def show_qr(self, url):
+        import qrcode
+        if self.qr_window is None:
+            self.qr_window = tk.Toplevel(self.root)
+            self.qr_window.title("Подключение Telegram")
+            self.qr_window.transient(self.root)
+            self.qr_window.protocol("WM_DELETE_WINDOW", self.stop)
+            ttk.Label(self.qr_window, padding=12, text="На телефоне выберите аккаунт агента и откройте\nНастройки → Устройства → Подключить устройство.").pack()
+            self.qr_canvas = tk.Canvas(self.qr_window, bg="white", highlightthickness=0)
+            self.qr_canvas.pack(padx=12, pady=(0, 12))
+        qr = qrcode.QRCode(border=4)
+        qr.add_data(url)
+        rows = qr.get_matrix()
+        scale = 6
+        self.qr_canvas.configure(width=len(rows)*scale, height=len(rows)*scale)
+        self.qr_canvas.delete("all")
+        for y, row in enumerate(rows):
+            for x, dark in enumerate(row):
+                if dark:
+                    self.qr_canvas.create_rectangle(x*scale, y*scale, (x+1)*scale, (y+1)*scale, outline="", fill="black")
+
+    def start(self, use_qr=False):
         if self.proc:
             return
         values = {k: v.get().strip() for k, (v, _) in self.entries.items()}
@@ -256,7 +289,7 @@ class Window:
             validate(values)
             self.pending_values = values
             self.pipe, child = multiprocessing.Pipe()
-            self.proc = multiprocessing.Process(target=worker, args=(child, values))
+            self.proc = multiprocessing.Process(target=worker, args=(child, values, use_qr))
             self.proc.start()
             child.close()
         except (ValueError, OSError) as exc:
@@ -266,6 +299,7 @@ class Window:
         for _, field in self.entries.values():
             field.state(["disabled"])
         self.start_button.state(["disabled"])
+        self.code_button.state(["disabled"])
         self.stop_button.state(["!disabled"])
         self.state.set("Подключение к Telegram…")
         self.root.after(100, self.poll)
@@ -275,6 +309,10 @@ class Window:
         try:
             while self.pipe.poll():
                 kind, value = self.pipe.recv()
+                if kind == "qr" and not self.closing and not self.cancelling:
+                    self.show_qr(value)
+                    continue
+                self.hide_qr()
                 if kind == "authorized" and not self.closing and not self.cancelling:
                     try:
                         save_settings(self.pending_values)
@@ -298,6 +336,7 @@ class Window:
             self.root.after(100, self.poll)
             return
         self.proc.join()
+        self.hide_qr()
         code = self.proc.exitcode
         self.proc.close()
         self.proc = None
@@ -310,9 +349,11 @@ class Window:
         for _, field in self.entries.values():
             field.state(["!disabled"])
         self.start_button.state(["!disabled"])
+        self.code_button.state(["!disabled"])
         self.stop_button.state(["disabled"])
 
     def stop(self):
+        self.hide_qr()
         if not self.proc:
             try:
                 windows_service.stop()

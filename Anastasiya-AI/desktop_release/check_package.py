@@ -39,7 +39,7 @@ async def exercise(values):
             return True
 
         async def get_me(self):
-            return SimpleNamespace(id=123)
+            return SimpleNamespace(id=123, phone=values["TG_PHONE"][1:])
 
         async def disconnect(self):
             history.append("disconnected")
@@ -72,6 +72,24 @@ async def exercise(values):
     with patch.object(cli, "TelegramClient", Client), patch("telegram_adapter.listen", listen):
         await desktop.run_agent(Pipe(), values)
         assert history == ["code", "password", "authorized", "disconnected", "authorized"], history
+        from telethon.errors import SessionPasswordNeededError
+        from unittest.mock import AsyncMock
+        tokens = [SimpleNamespace(url="tg://login?token=a", wait=AsyncMock(side_effect=TimeoutError())),
+                  SimpleNamespace(url="tg://login?token=b", wait=AsyncMock(side_effect=SessionPasswordNeededError(None)))]
+        with patch.object(Client, "is_user_authorized", new=AsyncMock(return_value=False)), \
+             patch.object(Client, "qr_login", new=AsyncMock(side_effect=tokens), create=True), \
+             patch.object(Client, "sign_in", new=AsyncMock(), create=True) as sign_in:
+            await desktop.run_agent(Pipe(), values, use_qr=True)
+            sign_in.assert_awaited_once_with(password="test-password")
+            assert history[-5:] == ["qr", "qr", "password", "disconnected", "authorized"]
+        with patch.object(Client, "get_me", new=AsyncMock(return_value=SimpleNamespace(phone="000"))), \
+             patch.object(Client, "log_out", new=AsyncMock(), create=True) as logout:
+            try:
+                await desktop.run_agent(Pipe(), values, use_qr=True)
+            except cli.WrongTelegramAccount:
+                logout.assert_awaited_once()
+            else:
+                raise AssertionError("Mismatched account accepted")
         await desktop.run_agent(None, values, stopped)
         assert history[-3:] == ["unattended", "panel", "disconnected"], history
 
@@ -85,6 +103,9 @@ if __name__ == "__main__":
     root.withdraw()
     window = desktop.Window(root)
     assert set(window.entries) == set(values)
+    window.show_qr("tg://login?token=offline")
+    assert window.qr_canvas.find_all()
+    window.hide_qr()
     root.destroy()
     desktop.validate(values)
     profile_store.save_settings(values)

@@ -17,7 +17,7 @@ PROFILE_MODULES = {"app_settings", "autojoin", "campaigns", "city_sources", "cli
 
 
 def runtime_deps():
-    pending = ["telethon", "openai", "python-dotenv"]
+    pending = ["telethon", "openai", "python-dotenv", "qrcode"]
     seen = set()
     while pending:
         dist = metadata.distribution(pending.pop())
