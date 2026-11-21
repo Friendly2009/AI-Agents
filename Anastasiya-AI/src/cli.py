@@ -15,11 +15,11 @@ from app_settings import safe_test_mode, session_path, settings
 BASE = Path(__file__).resolve().parents[1]
 
 
-async def main(app):
+async def main(app, *, argv=None, login=None, connected=None, authorize_only=False, unattended=False):
     parser = argparse.ArgumentParser(description='Soft Skills Telegram Outreach')
     parser.add_argument('mode', choices=['listen','send-optins','send-radar','discover','retry-crm','status','preview','radar-preview','import-verified','lead-report','join-status','join-cycle'])
     parser.add_argument('--file', default='', help='CSV с документированными согласиями для import-verified')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
     if args.mode == 'import-verified':
         if not args.file:
@@ -70,9 +70,18 @@ async def main(app):
                                 request_retries=0, auto_reconnect=(args.mode == 'listen'),
                                 connection_retries=5, retry_delay=2, raise_last_call_error=True)
         client.configure_delivery(app.STORE, app.director_admin_ids(0), app.M)
-        await client.start(phone=os.getenv('TG_PHONE', '').strip() or None)
+        if unattended:
+            await client.connect()
+            if not await client.is_user_authorized():
+                raise RuntimeError("Telegram session requires interactive authorization")
+        else:
+            await client.start(phone=os.getenv('TG_PHONE', '').strip() or None, **(login or {}))
+        if authorize_only:
+            return
         client.configure_delivery(app.STORE, app.director_admin_ids(0) | {(await client.get_me()).id}, app.M)
         if args.mode == 'listen':
+            if connected is not None:
+                connected()
             await app.listen(client)
         elif args.mode == 'send-optins':
             await app.send_optins(client)
