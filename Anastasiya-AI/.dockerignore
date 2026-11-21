@@ -1,0 +1,10 @@
+**
+!requirements.txt
+!requirements-docker.lock
+!src/
+!src/*.py
+!scripts/
+!scripts/launch.py
+!resources/
+!resources/knowledge.json
+!resources/sales_expertise.md
