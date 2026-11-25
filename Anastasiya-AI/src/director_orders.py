@@ -267,19 +267,19 @@ def public_context()->str:
     return json.dumps(small,ensure_ascii=False)
 
 
-def admin_ids(service_id:int):
-    """Only two specifically pinned administrator accounts, never usernames or display names."""
-    raw_owner=os.getenv('ADMIN_OWNER_TG_ID','').strip()
-    raw_wife=os.getenv('ADMIN_WIFE_TG_ID','').strip()
-    if not (raw_owner and raw_wife):
-        return set()  # Fail closed until both principals are configured.
-    if not (raw_owner.isdigit() and raw_wife.isdigit()):
-        raise ValueError('ADMIN_OWNER_TG_ID и ADMIN_WIFE_TG_ID должны быть числовыми Telegram ID')
-    result={int(raw_owner),int(raw_wife)}
-    if len(result)!=2 or min(result)<=0:
-        raise ValueError('Telegram ID двух администраторов должны быть разными положительными числами')
+def admin_ids(service_id: int):
+    """Return each configured Telegram administrator ID."""
+    raw_ids = [
+        os.getenv('ADMIN_OWNER_TG_ID', '').strip(),
+        os.getenv('ADMIN_WIFE_TG_ID', '').strip(),
+    ]
+    configured = [value for value in raw_ids if value]
+    if any(not value.isdigit() or int(value) <= 0 for value in configured):
+        raise ValueError('ADMIN_OWNER_TG_ID и ADMIN_WIFE_TG_ID должны быть положительными числовыми Telegram ID')
+    result = {int(value) for value in configured}
+    if len(result) != len(configured):
+        raise ValueError('Telegram ID администраторов должны быть разными')
     return result
-
 
 def is_admin(sender_id:int,service_id:int):
     return int(sender_id) in admin_ids(service_id)

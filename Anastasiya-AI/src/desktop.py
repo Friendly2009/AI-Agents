@@ -39,9 +39,9 @@ def validate(v):
         raise ValueError("Введите телефон с кодом страны, например +79991234567.")
     if not re.fullmatch(r"[1-9][0-9]*", v["TG_API_ID"]) or not re.fullmatch(r"[a-fA-F0-9]{32}", v["TG_API_HASH"]):
         raise ValueError("Проверьте API ID (число) и API Hash (32 шестнадцатеричных символа) с my.telegram.org.")
-    ids = [v["ADMIN_OWNER_TG_ID"], v["ADMIN_WIFE_TG_ID"]]
-    if any(ids) and (not all(re.fullmatch(r"[1-9][0-9]*", x) for x in ids) or ids[0] == ids[1]):
-        raise ValueError("Введите два разных числовых ID администраторов или оставьте оба поля пустыми.")
+    ids = [value for value in (v["ADMIN_OWNER_TG_ID"], v["ADMIN_WIFE_TG_ID"]) if value]
+    if any(not re.fullmatch(r"[1-9][0-9]*", value) for value in ids) or len(set(ids)) != len(ids):
+        raise ValueError("Укажите положительные числовые Telegram ID. Повторять один ID нельзя.")
     if not re.fullmatch(r"[A-Za-z0-9_-]{3,24}", v["TG_SESSION_NAME"]):
         raise ValueError("Имя сессии должно содержать от 3 до 24 латинских букв, цифр, дефисов или подчёркиваний.")
     for key, default in DEFAULTS.items():
