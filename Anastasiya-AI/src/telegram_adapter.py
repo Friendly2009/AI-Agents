@@ -219,7 +219,7 @@ async def listen(app, client):
             from agent_config import require_admin
             require_admin(event.sender_id)
             code = app.STORE.configuration().issue_login(event.sender_id)
-            await event.reply('Панель на компьютере агента: http://127.0.0.1:8765\nОдноразовый код на 5 минут:\n' + code)
+            await app.director_reply(client,event, 'Панель на компьютере агента: http://127.0.0.1:8765\nОдноразовый код на 5 минут:\n' + code)
             return
         if low in {'ты тут', 'ты работаешь', 'проверь, работаешь ли ты', '/статус'}:
             await app.director_reply(client,event, 'На связи 🙂 Режим: ' + ('SAFE TEST' if safe_test_mode() else 'рабочий') + '. Для разговора как клиент: /диалог_тест. Управление: /помощь.')

@@ -39,6 +39,11 @@ def select(name, choices, value, label=None):
         f'<option value="{esc(x)}"' + (' selected' if x == value else '') + f'>{esc(x or "Наследовать")}</option>' for x in choices) + '</select></label>'
 
 
+def settings_section(anchor, title):
+    return (f'<section id="{anchor}"><header class="settings-heading"><h2>{title}</h2>'
+            '<button type="submit">Сохранить настройки</button></header>')
+
+
 def page(body):
     return '''<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Анастасия · Настройки</title><style>
@@ -48,6 +53,7 @@ a{color:#176b65}section{background:white;border:1px solid #dce5e7;border-radius:
 label{display:block;color:#3c555e;font-size:14px}input,select,textarea{display:block;box-sizing:border-box;width:100%;padding:10px;border:1px solid #b6c8cc;border-radius:7px;background:#fff;color:#192f38;font:inherit;margin:5px 0 14px}
 textarea{min-height:150px}button{padding:11px 18px;border:0;border-radius:7px;background:#176b65;color:white;font:inherit;margin:8px 8px 8px 0;cursor:pointer}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 24px}.muted{color:#62777e}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f6f7;padding:16px;border-radius:8px;font-size:13px}table{width:100%;border-collapse:collapse}td,th{text-align:left;border-bottom:1px solid #e2e9eb;padding:9px}.notice{padding:16px;background:#e2f1ed;border-radius:9px}
+.settings-heading{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap}.settings-heading button{margin:0}.settings-heading{margin-bottom:12px}
 </style><h1>Анастасия Владимировна</h1><p class="muted">Управление консультантом · локальная панель</p>''' + body + '</html>'
 
 
@@ -154,7 +160,7 @@ class Panel:
         raw = page(body).encode('utf-8')
         start_response(status, [('Content-Type', 'text/html; charset=utf-8'), ('Content-Length', str(len(raw))),
                                 ('Cache-Control', 'no-store'), ('X-Content-Type-Options', 'nosniff'),
-                                ('Referrer-Policy', 'no-referrer'), ('X-Frame-Options', 'DENY'),
+                                ('Referrer-Policy', 'same-origin'), ('X-Frame-Options', 'DENY'),
                                 ('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")] + extra)
         return [raw]
 
@@ -183,7 +189,7 @@ class Panel:
                 else:
                     item['enabled'] = action == 'enable'
                 cfg.save(actor, scope, target, item, expected, action)
-            note = '<p class="notice">Сохранено. Новая версия применяется к следующим сообщениям.</p>'
+            note = '<p class="notice" role="status">Сохранено. Новая версия применяется к следующим сообщениям.</p>'
         if action == 'slot':
             from manager import Manager
             manager = Manager(self.manager_path).bind(store)
@@ -220,7 +226,7 @@ class Panel:
         body += self.form(csrf, 'logout', '<button>Выйти</button>')
         body += '<section><h2>Область настроек</h2><form method="get"><div class="grid">' + select('scope', ('global', 'group', 'client'), scope, 'Область') + field('target', target, 'global / название группы / Telegram ID клиента') + '</div><button>Открыть или создать</button></form><p class="muted">Пустое поле наследует значение. У клиента одна группа; персональные значения имеют приоритет.</p></section>'
         body += '<section><h2>Сохранённые области</h2>' + ''.join('<p><a href="/?' + esc(urlencode(dict(scope=r[0], target=r[1]))) + '">' + esc(r[0] + ' / ' + r[1]) + '</a></p>' for r in store.db.execute('SELECT scope,target FROM agent_config ORDER BY scope,target LIMIT 200')) + '</section>'
-        controls = '<section id="general"><h2>Общие</h2><div class="grid">'
+        controls = settings_section('general', 'Общие') + '<p>Кнопка сохраняет изменения во всех трёх разделах этой области.</p><div class="grid">'
         values = item['settings']
         controls += field_optional('setting_agent_display_name', values.get('agent_display_name', ''), 'Имя консультанта')
         controls += select('setting_response_language', ('',) + languages(), values.get('response_language', ''), 'Язык')
@@ -228,15 +234,26 @@ class Panel:
             controls += field_optional('setting_model', values.get('model', ''), 'Модель LLM')
             controls += select('setting_mode', ('', 'active', 'paused'), values.get('mode', ''), 'Режим работы')
         controls += select('setting_outbound_allowed', ('', 'true', 'false'), str(values.get('outbound_allowed', '')).lower(), 'Разрешать допустимые исходящие')
-        controls += '</div><p class="muted">Разрешение исходящих не заменяет согласия клиента и SAFE_TEST_MODE.</p></section><section id="character"><h2>Характер</h2><div class="grid">'
+        controls += '</div><p class="muted">Разрешение исходящих не заменяет согласия клиента и SAFE_TEST_MODE.</p></section>'
+        controls += settings_section('character', 'Характер') + '<div class="grid">'
+        setting_labels = {
+            'mood': 'Тон общения',
+            'emoji_frequency': 'Частота эмодзи',
+            'humor_level': 'Юмор',
+            'warmth': 'Теплота',
+            'formality': 'Официальность',
+            'initiative': 'Инициативность',
+            'verbosity': 'Подробность',
+        }
         for key, choices in CHOICES.items():
-            controls += select('setting_' + key, ('',) + choices, values.get(key, ''), key)
+            controls += select('setting_' + key, ('',) + choices, values.get(key, ''), 'Стиль ответа' if key == 'conversation_style' else setting_labels.get(key, key))
         for key in SCALES:
             controls += select('setting_' + key, ('', '0', '1', '2', '3', '4', '5'), str(values.get(key, '')), key)
-        controls += '</div></section><section id="prompts"><h2>Промпты</h2><p>Редактируется дополнительная манера общения. Ограничения безопасности и согласий закреплены в коде.</p>'
+        controls += '</div></section>'
+        controls += settings_section('prompts', 'Промпты') + '<p>Редактируется дополнительная манера общения. Ограничения безопасности и согласий закреплены в коде.</p>'
         if scope == 'client':
             controls += field_optional('group', item['group'], 'Группа клиента')
-        controls += '<label>Дополнительные инструкции<textarea name="prompt" maxlength="6000">' + esc(item['prompt']) + '</textarea></label><button>Проверить и сохранить</button></section>'
+        controls += '<label>Дополнительные инструкции<textarea name="prompt" maxlength="6000">' + esc(item['prompt']) + '</textarea></label></section>'
         body += self.form(csrf, 'save', common + controls)
         body += '<section><h2>История и применение</h2><p>Состояние: ' + ('удалено' if item['deleted'] else 'включено' if item['enabled'] else 'отключено') + '</p>'
         for act, label in [('disable', 'Отключить'), ('enable', 'Включить'), ('delete', 'Удалить текущую версию')]:
