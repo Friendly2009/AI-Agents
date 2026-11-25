@@ -235,7 +235,22 @@ class Store:
             self.db.execute("INSERT OR REPLACE INTO safety_state VALUES('outbound_block', ?)", (reason,))
 
     def outbound_blocked(self):
-        return bool(self.db.execute("SELECT 1 FROM safety_state WHERE name='outbound_block'").fetchone())
+        restriction = self.db.execute("""
+            SELECT block.value, deadline.value
+            FROM safety_state AS block
+            LEFT JOIN safety_state AS deadline ON deadline.name = 'restricted_until'
+            WHERE block.name = 'outbound_block'
+        """).fetchone()
+        if restriction is None:
+            return False
+        reason, expires_at = restriction
+        if reason != 'FloodWaitError' or not expires_at:
+            return True
+        try:
+            deadline = datetime.fromisoformat(expires_at)
+        except ValueError:
+            return True
+        return deadline.tzinfo is None or deadline > datetime.now(timezone.utc)
 
     def ever_contacted(self, uid):
         return self.was_sent(uid) or bool(self.db.execute(

@@ -89,7 +89,7 @@ async def main(app, *, argv=None, login=None, connected=None, authorize_only=Fal
         aid, ahash = settings()
         client = TelegramClient(str(session_path()), aid, ahash, flood_sleep_threshold=0,
                                 request_retries=0, auto_reconnect=(args.mode == 'listen'),
-                                connection_retries=5, retry_delay=2, raise_last_call_error=True)
+                                connection_retries=5, retry_delay=2)
         if not (unattended or authorize_only):
             client.configure_delivery(app.STORE, app.director_admin_ids(0), app.M)
         if unattended:
