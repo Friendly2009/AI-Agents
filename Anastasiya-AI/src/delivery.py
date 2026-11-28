@@ -184,6 +184,7 @@ class TestTransport:
 
 class GuardedTelegramClient(TelegramClient):
     def configure_delivery(self,store,admins,manager):
+        self.saved_send_lock = asyncio.Lock()
         manager.bind(store)
         self.delivery=Ledger(store);self.delivery_admins=set(admins);self.delivery_manager=manager
 
@@ -205,19 +206,35 @@ class GuardedTelegramClient(TelegramClient):
         uid = self.saved_messages_user_id
         if not uid:
             raise PolicyBlocked('session_user_unknown')
+        async with self.saved_send_lock:
+            return await self._direct_admin_reply(uid, message_id, text, saved=True)
+
+    async def generated_saved_message(self, message_id):
+        async with self.saved_send_lock:
+            return bool(self.delivery.db.execute(
+                "SELECT 1 FROM outbound_operations WHERE uid=? AND message_id=? AND state='sent'",
+                (self.saved_messages_user_id, message_id)).fetchone())
+
+    async def reply_to_admin_chat(self, uid, message_id, text):
+        if uid not in self.delivery_admins or uid <= 0 or not message_id:
+            raise PolicyBlocked('unknown_admin_chat')
+        return await self._direct_admin_reply(uid, message_id, text, saved=False)
+
+    async def _direct_admin_reply(self, uid, message_id, text, *, saved):
         digest = hashlib.sha256(text.encode()).hexdigest()[:24]
-        key = f'saved_reply:{uid}:{message_id}:{digest}'
+        source = 'saved_messages' if saved else 'admin_conversation'
+        prefix = 'saved_reply' if saved else 'admin_chat'
+        key = f'{prefix}:{uid}:{message_id}:{digest}'
         ledger = self.delivery
-        ledger.prepare(key, uid, 'admin', 'saved_messages')
+        ledger.prepare(key, uid, 'admin', source)
         if ledger.row(key)['state'] == 'sent':
             return
         ledger.validate(key)
         ledger.approve(key)
 
         async def send():
-            # Fixed destination: this operation can only reply to our own Saved Messages.
             return await super(GuardedTelegramClient, self).send_message(
-                'me', text, reply_to=message_id, parse_mode=None)
+                'me' if saved else uid, text, reply_to=message_id, parse_mode=None)
 
         if not await ledger.deliver(key, send, safe=False):
             raise PolicyBlocked(ledger.row(key).get('error') or ledger.row(key)['state'])
@@ -225,6 +242,12 @@ class GuardedTelegramClient(TelegramClient):
     async def send_message(self,entity,message='',*args,**kwargs):
         peer=await self.get_input_entity(entity)
         uid=utils.get_peer_id(peer)
+        if uid == getattr(self, 'saved_messages_user_id', None):
+            async with self.saved_send_lock:
+                return await self._guarded_send(peer, uid, message, *args, **kwargs)
+        return await self._guarded_send(peer, uid, message, *args, **kwargs)
+
+    async def _guarded_send(self, peer, uid, message, *args, **kwargs):
         current=active_send.get()
         if current and current[0]==uid and current[2] is self.delivery.store:
             operation = self.delivery.row(current[1])
@@ -247,6 +270,7 @@ class GuardedTelegramClient(TelegramClient):
             value=await super(GuardedTelegramClient,self).send_message(peer,message,*args,**kwargs)
             result.append(value);return value
         from runtime_policy import safe_mode
-        if not await self.delivery.deliver(key,send,safe=safe_mode()):
+        admin_reply = kind == "admin" and bool(kwargs.get("reply_to"))
+        if not await self.delivery.deliver(key,send,safe=safe_mode() and not admin_reply):
             raise PolicyBlocked(self.delivery.row(key).get('error') or self.delivery.row(key)['state'])
         return result[0]

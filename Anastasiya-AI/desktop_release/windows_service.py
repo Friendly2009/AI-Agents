@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import time
 import winreg
 
 NAME = "AnastasiyaAI"
@@ -36,6 +37,53 @@ def check_owner():
     binary = Path(image[1:-len('" --service')]).resolve()
     if binary.parent.parent != HOST.parent.parent or binary.name != HOST.name or account.lower() != ("NT SERVICE\\" + NAME).lower():
         raise ValueError("Имя AnastasiyaAI уже занято другой службой.")
+    return binary
+
+
+def wait_state(expected, transitional):
+    deadline = time.monotonic() + 35
+    while True:
+        state = status()
+        if state == expected:
+            return
+        if state not in transitional or time.monotonic() >= deadline:
+            raise OSError(f"Служба в состоянии {state}, ожидалось {expected}.")
+        time.sleep(0.3)
+
+
+def upgrade_existing():
+    state = status()
+    if not state:
+        return
+    previous = check_owner()
+    if previous == HOST:
+        return
+    if state == 2:
+        wait_state(4, {2})
+        state = 4
+    if state == 3:
+        wait_state(1, {3})
+        state = 1
+    if state not in {1, 4}:
+        raise OSError("Дождитесь остановки или запуска службы и откройте приложение снова.")
+    running = state == 4
+    if running:
+        command("stop", NAME)
+        wait_state(1, {3, 4})
+    try:
+        command("config", NAME, "binPath=", f'"{HOST}" --service')
+        if check_owner() != HOST:
+            raise OSError("Windows не подтвердила путь к новой версии.")
+        if running:
+            command("start", NAME)
+            wait_state(4, {2})
+    except (ValueError, OSError):
+        if status() == 1:
+            command("config", NAME, "binPath=", f'"{previous}" --service')
+            if running:
+                command("start", NAME)
+        raise
+
 
 
 def install_start():

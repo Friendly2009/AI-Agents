@@ -372,9 +372,8 @@ def test_handler_lifecycle(store, scenario):
             assert store.pending_inbound()[0]['content']=='Сколько стоит?'
         else:
             await main.handle_dm(client,event('Сколько стоит?',1))
-            model_mock.assert_not_awaited()
-            await main.handle_dm(client,event('да',2))
             model_mock.assert_awaited_once()
+            assert not store.get(42)['crm_consent']
             assert model_mock.call_args.args[0][-1]['content']=='Сколько стоит?'
     with patch.multiple(main,STORE=store,M=manager,TESTERS=set(),CHAT_LOCKS={}), \
          patch.object(main,'respond',model_mock),patch.object(main,'manager_commands',AsyncMock(return_value=False)), \

@@ -121,48 +121,21 @@ async def _handle_dm(app, client, event):
             return
         if not testing and not safe_test_mode():
             app.LEARNING.mark_engaged(user_id, text)
-        if not contact.get('ai_consent'):
-            prior = STORE.history(user_id)
-            asked = bool(prior and prior[-1]['role'] == 'assistant' and prior[-1]['content'] == PERMISSION)
-            if asked and is_yes(text):
-                ConversationState(STORE).update(user_id, ai_consent=1, ai_notice_shown=1)
-                ConversationState(STORE).add_turn(user_id, 'user', text)
-                pending = next((m['content'] for m in reversed(prior) if m['role'] == 'user'), '')
-                if pending and not is_greeting(pending):
-                    text = pending
-                    contact = STORE.get(user_id)
-                else:
-                    reply = 'Спасибо. Какой вопрос о занятиях хотите обсудить?'
-                    await event.reply(reply)
-                    ConversationState(STORE).add_turn(user_id, 'assistant', reply)
-                    return
-            elif is_ai_decline(text):
-                await event.reply('Можно продолжить с менеджером Soft Skills: напишите /менеджер.')
-                return
-            else:
-                ConversationState(STORE).add_turn(user_id, 'user', text)
-                await event.reply(PERMISSION)
-                ConversationState(STORE).add_turn(user_id, 'assistant', PERMISSION)
-                return
-        if not contact.get('ai_notice_shown'):
+        # Finish an outstanding question from older installations only if answered.
+        prior = STORE.history(user_id)
+        if prior and prior[-1]['content'] == PERMISSION and prior[-1]['role'] == 'assistant':
             if is_ai_decline(text):
-                await event.reply('Можно продолжить с менеджером Soft Skills: напишите /менеджер.')
+                await event.reply('Можно связаться с менеджером Soft Skills: /менеджер.')
                 return
-            intro = 'Я Анастасия, ассистент Soft Skills. Помогу разобраться с занятиями.'
-            if is_greeting(text):
-                intro += ' Что хотели бы узнать?'
-            await client.send_message(event.chat_id, intro)
-            ConversationState(STORE).update(user_id, ai_notice_shown=1)
-            contact = STORE.get(user_id)
-            if is_greeting(text):
-                ConversationState(STORE).add_turn(user_id, 'user', text)
-                ConversationState(STORE).add_turn(user_id, 'assistant', intro)
-                return
-            ConversationState(STORE).add_turn(user_id, 'assistant', intro)
-            pending = app.PENDING_QUESTIONS.pop(user_id, [])
-            if pending:
-                text = '\n'.join(pending + [text])
-
+            if is_yes(text):
+                text = next((m['content'] for m in reversed(prior) if m['role'] == 'user'), text)
+        from conversation_info import direct_answer
+        answer = direct_answer(text)
+        if answer:
+            ConversationState(STORE).add_turn(user_id, 'user', text)
+            await event.reply(answer)
+            ConversationState(STORE).add_turn(user_id, 'assistant', answer)
+            return
 
         decision = recording_decision([] if question_expired(STORE.dialogue(user_id)) else STORE.history(user_id), text)
         dialogue = ConversationState(STORE).observe(user_id, text)
@@ -187,7 +160,7 @@ async def _handle_dm(app, client, event):
             return
 
         if is_greeting(text) and not STORE.history(user_id):
-            reply = 'Привет! Что хотели бы узнать о занятиях?'
+            reply = 'Здравствуйте! Чем могу помочь?'
             ConversationState(STORE).add_turn(user_id, 'user', text)
             await event.reply(reply)
             ConversationState(STORE).add_turn(user_id, 'assistant', reply)

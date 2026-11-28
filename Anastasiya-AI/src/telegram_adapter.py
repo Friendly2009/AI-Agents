@@ -18,6 +18,7 @@ from community_inspector import normalize_public_community, inspect_community, s
 from city_sources import CATEGORIES, init_catalog, catalog_report, mark_local, search_telegram_sources, export_catalog_csv, resolve_category, upsert_sources, locality_signal
 from autojoin import run_auto_join, refresh_pending, status_report as join_status_report, enable as join_enable, normalize_username as normalize_join_username
 from app_settings import allowed_groups, safe_test_mode
+from conversation_info import ADMIN, CLIENT, direct_answer
 from consultation_input import ConsultationInput
 
 LOG = logging.getLogger('softskills')
@@ -211,18 +212,51 @@ async def listen(app, client):
     invitations = Invitations(client, app.STORE, safe_test_mode,
                               app.director_admin_ids(owner_id) | {owner_id}, invitation_consent)
 
+    admin_history = {}
+
+    async def admin_conversation(event, message):
+        uid = event.chat_id
+        async with app.CHAT_LOCKS.setdefault(uid, asyncio.Lock()):
+            history = admin_history.setdefault(uid, [])
+            answer = direct_answer(message, admin=True, safe=safe_test_mode())
+            if not answer:
+                if message.lower().strip(" !?.") in {"привет", "здравствуйте", "ты тут", "ты работаешь"}:
+                    answer = "На связи! Чем могу помочь?"
+                else:
+                    try:
+                        result = await app.respond(history + [{"role": "user", "content": message}],
+                            manager=app.M, campaign=app.load_active(),
+                            client_context={"audience": "Администратор. Свободный разговор. Отвечай по теме, без предложения записи.",
+                                            "capabilities": CLIENT + " " + ADMIN,
+                                            "safe_test_mode": safe_test_mode(),
+                                            "actions_executed": []},
+                            configuration=app.STORE.configuration().resolve(uid))
+                        answer = result["reply"]
+                    except Exception:
+                        LOG.exception("Не удалось подготовить ответ администратору")
+                        answer = "Сейчас не получается получить ответ модели. Проверьте настройки модели и подключение."
+            if uid == owner_id:
+                await client.reply_to_saved_command(event.id, answer)
+            else:
+                await client.reply_to_admin_chat(uid, event.id, answer)
+            history.extend([{"role": "user", "content": message}, {"role": "assistant", "content": answer}])
+            del history[:-30]
+
     async def admin_commands(event):
         """All earlier commands are also available to either approved personal admin ID."""
         message = (event.raw_text or '').strip()
         low = message.lower().strip(' !?.')
+        if low == '/версия':
+            await app.director_reply(client, event, 'Анастасия · Чат 2')
+            return
         if low == '/панель':
             from agent_config import require_admin
             require_admin(event.sender_id)
             code = app.STORE.configuration().issue_login(event.sender_id)
             await app.director_reply(client,event, 'Панель на компьютере агента: http://127.0.0.1:8765\nОдноразовый код на 5 минут:\n' + code)
             return
-        if low in {'ты тут', 'ты работаешь', 'проверь, работаешь ли ты', '/статус'}:
-            await app.director_reply(client,event, 'На связи 🙂 Режим: ' + ('SAFE TEST' if safe_test_mode() else 'рабочий') + '. Для разговора как клиент: /диалог_тест. Управление: /помощь.')
+        if low in {'проверь, работаешь ли ты', '/статус'}:
+            await app.director_reply(client,event, 'На связи 🙂 Режим: ' + ('SAFE TEST' if safe_test_mode() else 'рабочий') + '. Можно просто написать вопрос. Управление: /помощь.')
             return
         if low == 'останови приглашения':
             invitations.stop.set()
@@ -265,15 +299,19 @@ async def listen(app, client):
             return
         if await app.manager_commands(client,event,app.STORE,admin=True, manager=app.M, learning=app.LEARNING):
             return
+        if not message.startswith('/'):
+            if message:
+                await admin_conversation(event, message)
+            return
         try:
             if safe_test_mode():
                 if message in {'/тест', '/проверка', '/помощь'}:
                     await app.director_reply(client,event,
                         '🔒 ANASTASIA SAFE TEST: включён.\n'
-                        'Не отправляю сообщения людям, не отвечаю на входящие, не вступаю ' 
+                        'Переписываюсь с администраторами. Клиентские диалоги отключены. Не вступаю ' 
                         'в группы, не запускаю поиск и не передаю данные в CRM.\n'
                         'Команды: /тест GPT Привет; /каталог; /проверка.\n'
-                        'Все ответы теста публикуются только здесь, в Избранном.')
+                        'Обычный вопрос можно написать сюда без команды.')
                 elif message.lower().startswith('/тест gpt '):
                     probe = message[len('/тест GPT '):].strip()[:350]
                     if not os.getenv('OPENAI_API_KEY','').strip():
@@ -452,7 +490,7 @@ async def listen(app, client):
                 resume_campaign()
                 await app.director_reply(client,event, '▶️ Кампания возобновлена. Исходящие всё равно требуют настроенного разрешённого списка и OUTREACH_ENABLED=true.')
             else:
-                await event.reply('Это директорский чат. Для проверки консультации: /диалог_тест. Можно написать «покажи заявки», «ты тут?» или «останови приглашения». Все команды: /помощь.')
+                await event.reply('Не узнала команду. Список команд — /помощь. Можно задать вопрос обычным сообщением.')
         except Exception as exc:
             LOG.exception('Команда владельца не выполнена')
             if safe_test_mode() and event.chat_id == owner_id:
@@ -463,6 +501,8 @@ async def listen(app, client):
     async def owner_command(event):
         # Existing administrative Saved Messages support is kept for the service account.
         if event.is_private and event.chat_id == owner_id:
+            if await client.generated_saved_message(event.id):
+                return
             await admin_commands(event)
 
     @client.on(events.NewMessage(outgoing=True))

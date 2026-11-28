@@ -91,7 +91,7 @@ async def run_agent(pipe, values, stop_event=None, use_qr=False):
         panel = make_server("127.0.0.1", 8765, Panel(), handler_class=QuietHandler)
         threading.Thread(target=panel.serve_forever, daemon=True).start()
         mode = "тестовый режим" if values["SAFE_TEST_MODE"] == "true" else "рабочий режим"
-        (PROFILE / "service-status.txt").write_text("Подключён к Telegram · " + mode, encoding="utf-8")
+        (PROFILE / "service-status.txt").write_text("Подключён к Telegram · Чат 2 · " + mode, encoding="utf-8")
 
     task = asyncio.create_task(cli.main(app, argv=["listen"], login={
         "code_callback": lambda: prompt("code"), "password": lambda: prompt("password")
@@ -190,7 +190,7 @@ class Window:
         crm = {k: ("Александров" if "_ALEX_" in k else "Ярославль") + " · " + CRM_LABELS[k.split("_", 2)[2]]
                for k in DEFAULTS if k.startswith("ALFACRM_")}
         crm = {"CRM_ENABLED": "Подключить AlfaCRM", **crm}
-        self.page("Агент", MAIN, "API ID и Hash выдаёт my.telegram.org. ID администраторов можно добавить позже.\nТестовый режим ограничивает работу командами из «Избранного».")
+        self.page("Агент", MAIN, "API ID и Hash выдаёт my.telegram.org. ID администраторов можно добавить позже.\nВ тестовом режиме можно общаться с администратором и в «Избранном».")
         self.page("AlfaCRM", crm, "Заполните данные используемых филиалов, если подключаете CRM.")
         self.page("Дополнительно", {k: k for k in DEFAULTS if k not in MAIN and k not in crm}, "")
         bar = ttk.Frame(frame)
@@ -386,7 +386,12 @@ def main():
             try:
                 lock.execute("BEGIN EXCLUSIVE")
             except sqlite3.OperationalError:
-                messagebox.showinfo("Анастасия AI", "Окно агента уже открыто.", parent=root)
+                messagebox.showinfo("Анастасия AI", "Закройте прежнее окно Анастасии и снова откройте этот файл, чтобы применить обновление.", parent=root)
+                return
+            try:
+                windows_service.upgrade_existing()
+            except (ValueError, OSError) as exc:
+                messagebox.showerror("Обновление службы", str(exc), parent=root)
                 return
             Window(root)
             root.deiconify()

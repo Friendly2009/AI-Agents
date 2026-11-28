@@ -147,15 +147,14 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             await main.maybe_crm(None,42);await main.maybe_crm(None,42)
         self.assertEqual(create.await_count,1)
 
-    async def test_ai_consent_required_even_after_manual_opening(self):
-        self.s.ensure(42);ConversationState(self.s).update(42,ai_notice_shown=1)
+    async def test_direct_identity_after_manual_opening(self):
+        self.s.ensure(42)
         ConversationState(self.s).add_turn(42,'assistant','Привет!')
-        model=AsyncMock()
-        with patch.object(main,'respond',model):
-            e=event(text='Сколько стоит?');await main.handle_dm(SimpleNamespace(),e)
-            self.assertEqual(e.reply.call_args.args[0],main.PERMISSION)
-            await main.handle_dm(SimpleNamespace(),event(text='да',mid=2))
-        self.assertTrue(self.s.get(42)['ai_consent']);model.assert_not_called()
+        e = event(text='Ты человек?')
+        await main.handle_dm(SimpleNamespace(), e)
+        self.assertIn('ИИ', e.reply.call_args.args[0])
+        self.assertFalse(self.s.get(42)['ai_consent'])
+        self.assertFalse(self.s.get(42)['crm_consent'])
 
     async def test_stop_never_calls_llm(self):
         model=AsyncMock()
