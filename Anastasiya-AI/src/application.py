@@ -16,10 +16,9 @@ import submission_service
 import telegram_adapter
 import application_commands
 import cli
-from app_settings import PERMISSION, is_greeting, safe_test_mode
+from app_settings import is_greeting, safe_test_mode
 
 class Application:
-    PERMISSION = PERMISSION
     is_greeting = staticmethod(is_greeting)
     safe_test_mode = staticmethod(safe_test_mode)
 

@@ -9,10 +9,10 @@ import re
 from conversation_style import preference_updates, read_preferences, turn_state
 from sales_context import guard_sales_action
 from handoff_flow import requests_handoff, transfer_to_managers, reply_to_handoff
-from policy import is_stop, is_yes, is_ai_decline
+from policy import is_stop
 from dialogue_state import guard_model, safe_reply, question_expired
-from conversation_logic import should_ask_recording, RECORDING_QUESTION, recording_decision, ready_for_recording, known_context
-from app_settings import PERMISSION, is_greeting, safe_test_mode
+from conversation_logic import recording_refused, should_ask_recording, RECORDING_QUESTION, recording_decision, ready_for_recording, known_context
+from app_settings import is_greeting, safe_test_mode
 from conversation_service import ConversationState
 from handoff_ack import confirm_privacy
 
@@ -121,28 +121,40 @@ async def _handle_dm(app, client, event):
             return
         if not testing and not safe_test_mode():
             app.LEARNING.mark_engaged(user_id, text)
-        # Finish an outstanding question from older installations only if answered.
-        prior = STORE.history(user_id)
-        if prior and prior[-1]['content'] == PERMISSION and prior[-1]['role'] == 'assistant':
-            if is_ai_decline(text):
-                await event.reply('Можно связаться с менеджером Soft Skills: /менеджер.')
+        language = app.STORE.configuration().resolve(user_id)['values']['response_language']
+        decision = recording_decision([] if question_expired(STORE.dialogue(user_id)) else STORE.history(user_id), text)
+        dialogue = ConversationState(STORE).observe(user_id, text)
+        contact = STORE.get(user_id)
+        pipeline = not testing and not safe_test_mode() and os.getenv('CRM_ENABLED', '').lower() == 'true'
+        if pipeline:
+            from crm_pipeline import sync
+            trial = bool(dialogue.get('request_active') and contact.get('wants_trial')
+                         and not dialogue.get('family_ambiguous') and not dialogue.get('conflicts')
+                         and dialogue.get('intent') in {'request', 'engage'})
+            try:
+                synced = await sync(STORE, user_id, contact, getattr(sender, 'first_name', ''), trial)
+            except Exception as exc:
+                LOG.error('CRM pipeline sync failed: %s', type(exc).__name__)
+                synced = False
+            if trial and synced:
+                contact = STORE.get(user_id)
+                ConversationState(STORE).add_turn(user_id, 'user', text)
+                reply = await transfer_to_managers(client, notice_owner, M, user_id, contact, text,
+                    STORE.history(user_id), testing, store=STORE)
+                if await reply_to_handoff(STORE, user_id, reply, event.reply, testing):
+                    ConversationState(STORE).add_turn(user_id, 'assistant', reply)
                 return
-            if is_yes(text):
-                text = next((m['content'] for m in reversed(prior) if m['role'] == 'user'), text)
         from conversation_info import direct_answer
-        answer = direct_answer(text)
+        answer = direct_answer(text) if language == "ru" else None
         if answer:
             ConversationState(STORE).add_turn(user_id, 'user', text)
             await event.reply(answer)
             ConversationState(STORE).add_turn(user_id, 'assistant', answer)
             return
 
-        decision = recording_decision([] if question_expired(STORE.dialogue(user_id)) else STORE.history(user_id), text)
-        dialogue = ConversationState(STORE).observe(user_id, text)
-        contact = STORE.get(user_id)
         if decision is True and not ready_for_recording(contact):
             decision = None
-        if decision is not None:
+        if not pipeline and decision is not None:
             ConversationState(STORE).recording_consent(user_id, decision)
             ConversationState(STORE).add_turn(user_id, 'user', text)
             reply = ('Спасибо! Данные для заявки сохранены. Дату и время занятия ещё нужно подтвердить.'
@@ -159,8 +171,19 @@ async def _handle_dm(app, client, event):
                     ConversationState(STORE).add_turn(user_id, 'assistant', receipt)
             return
 
+        if (not pipeline and dialogue['request_active'] and dialogue['intent'] in {'request', 'engage'}
+                and not dialogue['family_ambiguous'] and not dialogue['conflicts']
+                and not contact.get('crm_consent') and not contact.get('crm_id')
+                and not recording_refused(STORE.history(user_id))):
+            prompt = RECORDING_QUESTION if ready_for_recording(contact) else safe_reply('', dialogue)
+            if prompt:
+                ConversationState(STORE).add_turn(user_id, 'user', text)
+                await event.reply(prompt)
+                ConversationState(STORE).add_turn(user_id, 'assistant', prompt)
+                return
+
         if is_greeting(text) and not STORE.history(user_id):
-            reply = 'Здравствуйте! Чем могу помочь?'
+            reply = 'Hello! How can I help?' if language == 'en' else 'Здравствуйте! Чем могу помочь?'
             ConversationState(STORE).add_turn(user_id, 'user', text)
             await event.reply(reply)
             ConversationState(STORE).add_turn(user_id, 'assistant', reply)
@@ -217,7 +240,7 @@ async def _handle_dm(app, client, event):
             return
         reply = safe_reply(str(parsed['reply']), dialogue)
         current = STORE.get(user_id)
-        if should_ask_recording(contact, current, parsed, STORE.history(user_id, limit=30)):
+        if not pipeline and should_ask_recording(contact, current, parsed, STORE.history(user_id, limit=30)):
             reply = RECORDING_QUESTION
         await client.send_message(event.chat_id, reply)
         from funnel import Funnel

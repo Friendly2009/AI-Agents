@@ -33,7 +33,7 @@ def runtime_deps():
 
 def build():
     with zipfile.ZipFile(PAYLOAD, "w", zipfile.ZIP_DEFLATED, compresslevel=5) as z:
-        for file in ("desktop.py", "profile_store.py", "windows_service.py"):
+        for file in ("agent.ico", "desktop.py", "profile_store.py", "windows_service.py"):
             z.write(HERE / file, file)
         z.write(PROJECT / ".env.example", "defaults.env")
         for file in ("resources/knowledge.json", "resources/sales_expertise.md", "config/approved_groups.json"):
@@ -71,7 +71,7 @@ def build():
                 z.write(file, "runtime/Lib/site-packages/" + file.relative_to(site).as_posix())
     OUTPUT.parent.mkdir(exist_ok=True)
     compiler = Path(os.environ["WINDIR"]) / "Microsoft.NET/Framework64/v4.0.30319/csc.exe"
-    subprocess.run([compiler, "/nologo", "/target:winexe", "/platform:x64", "/codepage:65001",
+    subprocess.run([compiler, "/nologo", "/target:winexe", "/platform:x64", "/win32icon:" + str(HERE / "agent.ico"), "/codepage:65001",
                     "/reference:System.IO.Compression.dll", "/reference:System.IO.Compression.FileSystem.dll", "/reference:System.ServiceProcess.dll",
                     "/resource:" + str(PAYLOAD) + ",agent.zip", "/out:" + str(OUTPUT), HERE / "Launcher.cs"], check=True)
     print(OUTPUT, OUTPUT.stat().st_size)

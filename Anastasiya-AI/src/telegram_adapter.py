@@ -1,5 +1,6 @@
 """Telegram event conversion, command routing and background task lifecycle."""
 from __future__ import annotations
+import re
 import asyncio
 import logging
 import os
@@ -218,16 +219,17 @@ async def listen(app, client):
         uid = event.chat_id
         async with app.CHAT_LOCKS.setdefault(uid, asyncio.Lock()):
             history = admin_history.setdefault(uid, [])
-            answer = direct_answer(message, admin=True, safe=safe_test_mode())
+            language = app.STORE.configuration().resolve(uid)['values']['response_language']
+            answer = direct_answer(message, admin=uid != owner_id, safe=safe_test_mode()) if language == "ru" else None
             if not answer:
                 if message.lower().strip(" !?.") in {"привет", "здравствуйте", "ты тут", "ты работаешь"}:
-                    answer = "На связи! Чем могу помочь?"
+                    answer = "Hello! How can I help?" if language == "en" else "На связи! Чем могу помочь?"
                 else:
                     try:
                         result = await app.respond(history + [{"role": "user", "content": message}],
                             manager=app.M, campaign=app.load_active(),
-                            client_context={"audience": "Администратор. Свободный разговор. Отвечай по теме, без предложения записи.",
-                                            "capabilities": CLIENT + " " + ADMIN,
+                            client_context={"audience": "Разговаривай на равных как консультант школы. Отвечай кратко и по существу, учитывай историю разговора.",
+                                            "capabilities": CLIENT if uid == owner_id else CLIENT + " " + ADMIN,
                                             "safe_test_mode": safe_test_mode(),
                                             "actions_executed": []},
                             configuration=app.STORE.configuration().resolve(uid))
@@ -246,13 +248,22 @@ async def listen(app, client):
         """All earlier commands are also available to either approved personal admin ID."""
         message = (event.raw_text or '').strip()
         low = message.lower().strip(' !?.')
-        if low == '/версия':
-            await app.director_reply(client, event, 'Анастасия · Чат 2')
+        if low in {'/помощь', '/диалог_тест', '/конец_теста'}:
+            await app.director_reply(client, event, 'Можно сразу написать вопрос о занятиях. Для управления есть /статус, /панель и /версия.')
             return
-        if low == '/панель':
+        if low == '/версия':
+            await app.director_reply(client, event, 'Анастасия · Чат 5')
+            return
+        if low == '/панель' or (
+            re.search(r'\b(?:админк\w*|(?:админ)?панел\w*|(?:admin )?panel)\b', low)
+            and re.search(r'\b(?:дай|дайте|покажи|открой|пришли|скинь|войти|получить|ссылк\w*|код\w*|доступ|open|send|link|code|access)\b', low)
+        ):
             from agent_config import require_admin
             require_admin(event.sender_id)
             code = app.STORE.configuration().issue_login(event.sender_id)
+            if app.STORE.configuration().resolve(event.sender_id)['values']['response_language'] == 'en':
+                await app.director_reply(client, event, 'Panel on the agent computer: http://127.0.0.1:8765\nOne-time code (5 minutes):\n' + code)
+                return
             await app.director_reply(client,event, 'Панель на компьютере агента: http://127.0.0.1:8765\nОдноразовый код на 5 минут:\n' + code)
             return
         if low in {'проверь, работаешь ли ты', '/статус'}:
@@ -501,7 +512,7 @@ async def listen(app, client):
     async def owner_command(event):
         # Existing administrative Saved Messages support is kept for the service account.
         if event.is_private and event.chat_id == owner_id:
-            if await client.generated_saved_message(event.id):
+            if event.reply_to_msg_id or await client.generated_saved_message(event.id):
                 return
             await admin_commands(event)
 
@@ -526,24 +537,15 @@ async def listen(app, client):
 
     @client.on(events.NewMessage(incoming=True))
     async def on_message(event):
+        if event.is_private and event.chat_id == owner_id:
+            return  # Saved Messages are handled by owner_command only.
         if event.is_private:
             # Both personal administrators can issue the entire set of administrative commands.
             if is_director_admin(event.sender_id,owner_id):
                 if event.sender_id in invitations.collecting and not (event.raw_text or '').startswith('/'):
                     await invitations.handle(event)
                     return
-                if event.raw_text == '/диалог_тест':
-                    app.reset_test(event.sender_id)
-                    await event.reply('Новый тестовый диалог: память чистая. Реальные заявки, CRM и уведомления руководителям отключены независимо от рабочего режима. Выход: /конец_теста')
-                    return
-                if event.raw_text == '/конец_теста':
-                    app.end_test(event.sender_id)
-                    await event.reply('Тест завершён')
-                    return
-                if event.sender_id in app.TESTERS and (not (event.raw_text or '').startswith('/') or (event.raw_text or '').split()[0] in {'/менеджер','/бронь','/отмена','/напомнить','/согласие_на_запись','/стоп','/удалить','/расписание'}):
-                    await app.handle_dm(client,event)
-                else:
-                    await admin_commands(event)
+                await admin_commands(event)
                 return
             # /мой_id is available before the two IDs are configured; it grants no rights.
             if await app.director_message(client,event,owner_id):

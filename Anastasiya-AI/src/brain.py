@@ -47,6 +47,8 @@ async def respond(history: list[dict], campaign: dict | None = None, learning_no
         history, facts=knowledge(), orders=public_context(), slots=manager.slots(),
         offer=offer_context(), campaign=campaign, client_context=client_context,
         learning_note=learning_note, settings=settings, configuration=configuration)
+    language = configuration['values'].get('response_language', 'ru')
+    instructions += f"\nWrite the entire user-facing reply in {language}, regardless of the input language. Answer the question directly. Never ask for permission to use AI."
     client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"], timeout=30)
     try:
         manager.llm_request(model)

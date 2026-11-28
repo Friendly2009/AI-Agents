@@ -30,6 +30,8 @@ async def transfer_to_managers(client, notify, manager, uid, contact, text, hist
     facts = '\n'.join(f'{key}: {contact[key]}' for key in ('name','city','course','child_age','wanted_time') if contact.get(key))
     message = f'Нужен менеджер\n{link}\nID: {uid}\nПричина: запрос консультации сотрудника\nВопрос: {question[:1000]}\nИзвестно:\n{facts}\nКонтекст:\n{context}\nВернуть помощника: /вернуть_ии {uid}'
     crm_status = 'карточка #' + str(contact['crm_id']) if contact.get('crm_id') else 'подтверждённого ID карточки нет'
+    if contact.get('crm_id') and contact.get('wants_trial'):
+        message += '\nЗапрос на пробное занятие. Согласуйте время с клиентом.'
     message += f'\nОбращение: TG-{uid}\nCRM: {crm_status}'
     message += f'\nОперация передачи: {key}'
     uncertain = False

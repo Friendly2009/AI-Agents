@@ -7,10 +7,6 @@ from pathlib import Path
 import re
 
 BASE = Path(__file__).resolve().parents[1]
-PERMISSION = ('Здравствуйте! Я Анастасия, ассистент Soft Skills. '
-              'Можно обработать ваш вопрос с помощью ИИ? Ответьте «да» или «нет».')
-
-
 def is_greeting(text):
     return re.sub(r"[^а-яa-z]", "", text.lower()) in {"привет", "здравствуйте", "добрыйдень", "доброеутро", "добрыйвечер", "здравствуй"}
 

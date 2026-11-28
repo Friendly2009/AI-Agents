@@ -30,7 +30,7 @@ def question_kind(reply):
         return 'handoff'
     if re.search(r'рассказать|объяснить|узнать подробнее', reply, re.I):
         return 'explain'
-    if re.search(r'оформить.{0,30}заявк|хотите.{0,25}записаться|записать вас', reply, re.I):
+    if re.search(r'предложила запись|оформить.{0,30}заявк|хотите.{0,25}записаться|записать вас', reply, re.I):
         return 'request'
     if re.search(r'хотите.{0,30}(?:прийти|попробовать)', reply, re.I):
         return 'interest'
@@ -120,7 +120,7 @@ def extract_facts(text, contact, state):
         _put(updates, state, contact, 'child_age', int(age[1]), text)
         if updates.get('child_age') == int(age[1]) and state.get('active_child'):
             state['children'][state['active_child']].update(age=int(age[1]), evidence=text[:400])
-    city = re.search(r'(?:мы\s+из|жив[её]м\s+в|переехали\s+в|город\s*[:—-]?)\s*(Александров[ае]?|Ярославл[ьея])\b', text, re.I)
+    city = re.search(r'(?:мы\s+из|жив[её]м\s+в|переехали\s+в|\bв|город\s*[:—-]?)\s*(Александров[ае]?|Ярославл[ьея])\b', text, re.I)
     if not city and (kind == 'city' or ('city' in state['conflicts'] and CORRECTION.search(text))):
         city = re.fullmatch(r'\s*(?:исправление[: ]*)?(Александров[ае]?|Ярославл[ьея])[.! ]*', text, re.I)
     if city:
@@ -128,6 +128,8 @@ def extract_facts(text, contact, state):
     name = re.search(r'меня зовут\s+([А-ЯЁа-яё-]{2,40})', text, re.I)
     if not name and kind == 'name':
         name = re.fullmatch(r'\s*([А-ЯЁ][а-яё-]{1,39})[.! ]*', text)
+    if not name and state.get('request_active'):
+        name = re.fullmatch(r'\s*[+78][\d ()-]{9,22}\d[ \t]*\r?\n[ \t]*([A-Za-zА-ЯЁа-яё-]{2,40})\s*', text)
     if name:
         _put(updates, state, contact, 'name', name[1].capitalize(), text)
     phone = re.search(r'(?<!\d)([+78][\d ()-]{9,22}\d)(?!\d)', text)
@@ -135,11 +137,13 @@ def extract_facts(text, contact, state):
         digits = re.sub(r'\D', '', phone[1])
         if len(digits) == 11 and digits[0] in '78':
             _put(updates, state, contact, 'phone', '+7' + digits[1:], text)
-    course = re.search(r'(?:интересует|хотим изучать|курс|направление)\s*[:—-]?\s*(программирование|робототехника|искусственный интеллект|ИИ|дизайн|Python|Scratch)\b', text, re.I)
+    course = re.search(r'(?:интересует|хотим изучать|курс|направление)\s*[:—-]?\s*(программирование|робототехника|искусственный интеллект|ИИ|анимаци(?:я|ю|и)|дизайн|Python|Scratch)\b', text, re.I)
     if not course and kind == 'course':
-        course = re.fullmatch(r'\s*(программирование|робототехника|искусственный интеллект|ИИ|дизайн|Python|Scratch)[.! ]*', text, re.I)
+        course = re.fullmatch(r'\s*(программирование|робототехника|искусственный интеллект|ИИ|анимаци(?:я|ю|и)|дизайн|Python|Scratch)[.! ]*', text, re.I)
+    if not course:
+        course = re.search(r'(?:^|\bпо |\bна )(анимаци[яию])(?:$|[ .,!?])', low, re.M)
     if course:
-        _put(updates, state, contact, 'course', course[1], text)
+        _put(updates, state, contact, 'course', 'Анимация' if course[1].lower().startswith('анимаци') else course[1], text)
     time = re.search(r'(?:удобно|подходит|можем)\s+((?:по\s+)?(?:вечерам|выходным|субботам|воскресеньям)|после\s+\d{1,2}(?::\d{2})?)', text, re.I)
     if time:
         _put(updates, state, contact, 'wanted_time', time[1], text)
@@ -171,12 +175,12 @@ def reduce_user(state, text, contact):
         intent = 'decline'
     elif need == 'pause' or low in {'позже', 'потом', 'я подумаю', 'подумаю'}:
         intent = 'pause'
-    elif low in YES:
+    elif low in YES or (previous_kind == 'request' and low.splitlines()[0:1] in (['давай'], ['давайте'], ['да'])):
         intent = {'request':'request', 'interest':'interest', 'explain':'explain',
                   'handoff':'handoff', 'consent':'consent'}.get(previous_kind, 'clarify')
     elif low == 'нет':
         intent = 'decline_request' if previous_kind in {'request','interest'} else 'negative'
-    elif not question and re.search(r'\b(?:запишите|хочу записаться|хотим записаться|оформите заявку|давайте запишемся)\b', low):
+    elif not question and re.search(r'\b(?:запиши|запишите|хочу записать ребёнка|хочу записать ребенка|хочу записаться|хотим записаться|оформите заявку|давайте запишемся)\b', low):
         intent = 'request'
     elif need in {'concern', 'repair'} or re.search(r'не любит программ|только игр|нет опыта|не подходит время|другие курсы|не доверя', low):
         intent = 'concern'

@@ -23,7 +23,14 @@ def esc(value):
 
 
 def dump(value):
-    return '<pre>' + esc(json.dumps(value, ensure_ascii=False, indent=2)) + '</pre>'
+    labels = {"actor":"Администратор","action":"Действие","target":"Область","at":"Время","configured":"Настроено","enabled":"Включено","connection":"Подключение","SAFE_TEST_MODE":"Тестовый режим","revision":"Версия","settings":"Настройки","save":"Сохранение","global:global":"Общие настройки"}
+    if isinstance(value, dict):
+        return '<dl>' + ''.join('<div><dt>'+esc(labels.get(k,k))+'</dt><dd>'+dump(v)+'</dd></div>' for k,v in value.items()) + '</dl>' if value else 'Нет данных'
+    if isinstance(value, list):
+        return '<ul>' + ''.join('<li>'+dump(v)+'</li>' for v in value) + '</ul>' if value else 'Пока нет записей'
+    if isinstance(value, bool):
+        return 'Да' if value else 'Нет'
+    return esc(labels.get(str(value),value) if value is not None else '—')
 
 
 def field(name, value='', label=None, kind='text'):
@@ -54,7 +61,8 @@ label{display:block;color:#3c555e;font-size:14px}input,select,textarea{display:b
 textarea{min-height:150px}button{padding:11px 18px;border:0;border-radius:7px;background:#176b65;color:white;font:inherit;margin:8px 8px 8px 0;cursor:pointer}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 24px}.muted{color:#62777e}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f6f7;padding:16px;border-radius:8px;font-size:13px}table{width:100%;border-collapse:collapse}td,th{text-align:left;border-bottom:1px solid #e2e9eb;padding:9px}.notice{padding:16px;background:#e2f1ed;border-radius:9px}
 .settings-heading{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap}.settings-heading button{margin:0}.settings-heading{margin-bottom:12px}
-</style><h1>Анастасия Владимировна</h1><p class="muted">Управление консультантом · локальная панель</p>''' + body + '</html>'
+:root{color-scheme:dark;background:#100f16;color:#f2eef8}body{margin:0 auto}section{background:#1b1923;border-color:#34303e}input,select,textarea,pre{background:#23212c;color:#eee9f5;border-color:#494352}a{color:#cfb6ff}label,.muted,dt{color:#c2b9cc}button{background:#624688}button:hover{background:#7956a2}.notice{background:#302a40}header.brand,footer{padding:25px 0;border-bottom:1px solid #393343}footer{color:#b9adca;border-top:1px solid #393343}header.brand{display:flex;align-items:center;gap:16px}.brand h1,.brand p{margin:0}.logo{border:1px solid #c3a0f3;border-radius:50%;background:#50396e;width:48px;height:48px;display:grid;place-items:center;font:bold 18px monospace}dl div{padding:6px 0;border-bottom:1px solid #393343;display:grid;grid-template-columns:minmax(7em,1fr) 2fr;gap:10px}dd{margin:0;overflow-wrap:anywhere}ul{padding-left:20px}td,th{border-color:#393343}
+</style><header class="brand"><span class="logo" aria-hidden="true">&lt;/&gt;</span><div><h1>Анастасия AI</h1><p class="muted">Панель консультанта</p></div></header><main>''' + body + '</main><footer>Анастасия AI · Локальная панель</footer></html>'
 
 
 def service_status():
@@ -264,11 +272,9 @@ class Panel:
         body += self.clients(store, csrf, data)
         body += '<section id="integrations"><h2>Интеграции</h2>' + dump(service_status()) + '<p class="muted">Ключи и Telegram-сессии не отображаются. Обновление секретов — только в существующем .env на компьютере агента.</p></section>'
         body += '<section id="testing"><h2>Тестирование</h2><p>Выбрана текущая область. Тестовые сообщения и ответ не записываются в историю клиентов. Telegram и CRM не вызываются.</p>'
-        test_form = common + '<label>Тестовый диалог: JSON-массив user/assistant<textarea name="dialogue">' + esc(data.get('dialogue', '[{"role":"user","content":"Расскажите о занятиях"}]')) + '</textarea></label>'
-        body += self.form(csrf, 'preview', test_form + '<button>Предпросмотр запроса</button>')
-        body += self.form(csrf, 'test', test_form + '<button>Получить ответ LLM</button>')
+        body += '<form method="post" action="/">' + hidden('csrf', csrf) + common + '<label>Сообщение консультанту<textarea required maxlength="4000" name="sample">' + esc(data.get('sample', 'Расскажите о занятиях')) + '</textarea></label><button name="action" value="preview">Предпросмотр</button><button name="action" value="test">Получить ответ</button></form>'
         if action in ('preview', 'test'):
-            history = json.loads(data['dialogue'])
+            history = [{'role':'user','content':data['sample']}] if 'sample' in data else json.loads(data['dialogue'])
             if not isinstance(history, list) or not 1 <= len(history) <= 20 or any(not isinstance(t, dict) or set(t) != {'role', 'content'} or t['role'] not in ('user', 'assistant') or not isinstance(t['content'], str) or len(t['content']) > 4000 for t in history):
                 raise ValueError('Некорректный диалог')
             from manager import Manager, knowledge
@@ -285,7 +291,7 @@ class Panel:
                 if action == 'test':
                     from brain import respond
                     result = asyncio.run(respond(history, manager=manager, configuration=resolved))
-                    body += '<h3>Ответ LLM</h3>' + dump(result)
+                    body += '<h3>Ответ LLM</h3>' + dump(result['reply'])
             finally:
                 manager.db.close()
                 real_manager.db.close()
@@ -293,7 +299,7 @@ class Panel:
         from manager import Manager
         manager = Manager(self.manager_path).bind(store)
         try:
-            body += '<section><h2>Занятия и аналитика</h2>' + dump(manager.slots()) + '<pre>' + esc(manager.report(store)) + '</pre>'
+            body += '<section><h2>Занятия и аналитика</h2>' + dump(manager.slots()) + dump(manager.report(store).splitlines())
             body += self.form(csrf, 'slot', '<div class="grid">' + select('city', ('Александров', 'Ярославль'), 'Александров', 'Город') + field('course', label='Название занятия') + field('starts', label='Дата ISO, например 2027-01-20T18:00:00+03:00') + field('capacity', '10', 'Количество мест', 'number') + '</div><button>Добавить занятие</button>') + '</section>'
         finally:
             manager.db.close()

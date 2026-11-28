@@ -31,6 +31,64 @@ CRM_LABELS = {"URL": "Адрес https://", "EMAIL": "Электронная п�
               "BRANCH": "ID филиала", "LEAD_SOURCE": "ID источника заявки"}
 
 
+ADVANCED = dict(line.split("|", 1) for line in """TG_SESSION_NAME|Имя сессии Telegram
+OUTREACH_ENABLED|Разрешить первые обращения
+DRY_RUN|Имитировать отправку обращений
+DAILY_LIMIT|Лимит отправок в сутки
+SEND_INTERVAL_SECONDS|Интервал между отправками, сек
+OUTREACH_POLL_MINUTES|Проверять очередь обращений каждые, мин
+AUTO_DISCOVER_GROUPS|Автоматически искать группы
+CITY_RADAR_QUERIES_PER_RUN|Поисковых запросов за один проход
+FAMILY_RADAR_ENABLED|Регистрация семей через Telegram
+PRIVACY_POLICY_URL|Ссылка на политику конфиденциальности
+FAMILY_RADAR_OUTREACH_ENABLED|Приглашать зарегистрированные семьи
+AUTO_JOIN_ENABLED|Автоматически вступать в группы
+AUTO_JOIN_DRY_RUN|Имитировать вступление в группы
+AUTO_JOIN_DAILY_LIMIT|Максимум вступлений за сутки
+AUTO_JOIN_MAX_TOTAL|Общий лимит вступлений
+AUTO_JOIN_PAUSE_SECONDS|Пауза между вступлениями, сек
+AUTO_JOIN_POLL_MINUTES|Проверять группы каждые, мин
+DIRECTOR_MODEL|Модель для поручений администратора
+VOICE_TRANSCRIPTION_MODEL|Модель распознавания речи
+REMINDERS_ENABLED|Напоминать клиентам о занятиях
+HISTORY_DAYS|Хранить историю диалогов, дней
+API_INPUT_USD_PER_MILLION|Цена миллиона входных токенов, $
+API_OUTPUT_USD_PER_MILLION|Цена миллиона выходных токенов, $
+API_PRICES_JSON|Индивидуальные тарифы моделей
+ANASTASIA_FORMALITY|Формальность общения
+ANASTASIA_WARMTH|Теплота ответов
+ANASTASIA_HUMOR_LEVEL|Уровень юмора
+ANASTASIA_VERBOSITY|Подробность ответов
+ANASTASIA_INITIATIVE|Инициативность в разговоре
+ANASTASIA_EMOJI_FREQUENCY|Частота эмодзи
+ANASTASIA_CONVERSATION_STYLE|Стиль консультации
+AGENT_LANGUAGES|Доступные языки ответов
+INITIAL_DAILY_LIMIT|Новых собеседников за сутки""".splitlines())
+
+def hint(parent, row, text):
+    icon = ttk.Label(parent, text="ⓘ", cursor="question_arrow", takefocus=True)
+    icon.grid(row=row, column=2, padx=5)
+    def show(event):
+        hide(event)
+        tip = tk.Toplevel(icon)
+        icon.tip = tip
+        tip.overrideredirect(True)
+        tip.geometry(f"+{icon.winfo_rootx()-240}+{icon.winfo_rooty()+24}")
+        ttk.Label(tip, text=text, wraplength=270, padding=10).pack()
+    def hide(event):
+        if getattr(icon, "tip", None):
+            icon.tip.destroy()
+            icon.tip = None
+    for event in ("<Enter>", "<FocusIn>"):
+        icon.bind(event, show)
+    for event in ("<Leave>", "<FocusOut>"):
+        icon.bind(event, hide)
+
+def authorized_marker(values):
+    identity = hashlib.sha256(values.get("TG_PHONE", "").encode()).hexdigest()[:12]
+    tag = hashlib.sha256(values.get("TG_SESSION_NAME", "").encode()).hexdigest()[:12]
+    return PROFILE / f"authorized-{identity}-{tag}"
+
 def validate(v):
     for key in ("AGENT_NAME", "OPENAI_API_KEY", "OPENAI_MODEL"):
         if not v[key]:
@@ -86,6 +144,7 @@ async def run_agent(pipe, values, stop_event=None, use_qr=False):
 
     def connected():
         nonlocal panel
+        authorized_marker(values).touch()
         from admin_panel import Panel, QuietHandler
         from wsgiref.simple_server import make_server
         panel = make_server("127.0.0.1", 8765, Panel(), handler_class=QuietHandler)
@@ -172,7 +231,15 @@ class Window:
     def __init__(self, root):
         self.root = root
         root.title("Анастасия AI")
-        root.geometry("710x600")
+        root.iconbitmap(str(ROOT / "agent.ico"))
+        root.geometry("840x690")
+        style = ttk.Style(root)
+        style.theme_use("clam")
+        style.configure(".", background="#191724", foreground="#f2eef8", fieldbackground="#282535", font=("Segoe UI", 10))
+        style.configure("TButton", background="#503b78", padding=(14,7))
+        style.map("TButton", background=[("active","#70559c")])
+        style.configure("TNotebook.Tab", padding=(16,8))
+        style.map("TNotebook.Tab", background=[("selected","#513e73")])
         self.proc = None
         self.qr_window = None
         self.pipe = None
@@ -182,7 +249,13 @@ class Window:
         self.values = read_settings()
         frame = ttk.Frame(root, padding=22)
         frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text="Анастасия AI", font=("Segoe UI", 21)).pack(anchor="w")
+        brand = ttk.Frame(frame)
+        brand.pack(anchor="w")
+        mark = tk.Canvas(brand, width=50, height=50, bg="#191724", highlightthickness=0)
+        mark.pack(side="left", padx=(0,12))
+        mark.create_oval(3,3,47,47, fill="#59417c", outline="#c0a1ed", width=2)
+        mark.create_text(25,25,text="</>", fill="white", font=("Consolas",14,"bold"))
+        ttk.Label(brand, text="Анастасия AI", font=("Segoe UI", 21)).pack(anchor="w")
         ttk.Label(frame, textvariable=self.state).pack(anchor="w", pady=(2, 12))
         self.book = ttk.Notebook(frame)
         self.book.pack(fill="both", expand=True)
@@ -192,7 +265,7 @@ class Window:
         crm = {"CRM_ENABLED": "Подключить AlfaCRM", **crm}
         self.page("Агент", MAIN, "API ID и Hash выдаёт my.telegram.org. ID администраторов можно добавить позже.\nВ тестовом режиме можно общаться с администратором и в «Избранном».")
         self.page("AlfaCRM", crm, "Заполните данные используемых филиалов, если подключаете CRM.")
-        self.page("Дополнительно", {k: k for k in DEFAULTS if k not in MAIN and k not in crm}, "")
+        self.page("Дополнительно", {k: ADVANCED.get(k,k) for k in DEFAULTS if k not in MAIN and k not in crm}, "")
         bar = ttk.Frame(frame)
         bar.pack(fill="x", pady=(14, 0))
         self.start_button = ttk.Button(bar, text="Войти по QR-коду", command=lambda: self.start(True))
@@ -219,6 +292,19 @@ class Window:
                     detail = path.read_text(encoding="utf-8") if state and path.exists() else ""
                     self.state.set(detail if detail.startswith("Откройте") else
                                    ("Служба остановлена" if state else "Первичная настройка службы Windows"))
+                identity = {k:self.entries[k][0].get().strip() for k in ("TG_PHONE","TG_SESSION_NAME")}
+                known = authorized_marker(identity).exists()
+                status_path = PROFILE / "service-status.txt"
+                previous_status = status_path.read_text(encoding="utf-8") if state and status_path.exists() else ""
+                if previous_status.startswith("Подключён") and not known and all(identity[k] == self.values.get(k) for k in identity):
+                    authorized_marker(identity).touch()
+                    known = True
+                self.start_button.configure(text="Запустить" if known else "Войти по QR-коду",
+                                            command=self.start if known else lambda: self.start(True))
+                if known:
+                    self.code_button.pack_forget()
+                elif not self.code_button.winfo_manager():
+                    self.code_button.pack(side="left", padx=8, after=self.start_button)
                 self.last_state = state
                 for _, field in self.entries.values():
                     field.state(["disabled" if active else "!disabled"])
@@ -246,6 +332,9 @@ class Window:
             ttk.Label(inner, text=help_text, wraplength=570).grid(row=0, columnspan=2, sticky="w", pady=(0, 8))
         for row, (key, label) in enumerate(fields.items(), 1):
             ttk.Label(inner, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=4)
+            tips = {"API_PRICES_JSON":"Тарифы отдельных моделей для отчёта затрат. Пустое поле использует цены входных и выходных токенов.", "TG_SESSION_NAME":"При изменении имени потребуется новый вход в Telegram.", "AGENT_LANGUAGES":"Коды языков через запятую, например ru,en. Язык консультации выбирается в панели.", "DRY_RUN":"Показывает запланированные обращения без отправки в Telegram.", "AUTO_JOIN_DRY_RUN":"Рассчитывает список групп без фактического вступления."}
+            if key in tips:
+                hint(inner, row, tips[key])
             value = tk.StringVar(value=self.values.get(key, DEFAULTS[key]))
             if DEFAULTS[key] in ("true", "false"):
                 field = ttk.Checkbutton(inner, variable=value, onvalue="true", offvalue="false")
@@ -315,6 +404,7 @@ class Window:
                 self.hide_qr()
                 if kind == "authorized" and not self.closing and not self.cancelling:
                     try:
+                        authorized_marker(self.pending_values).touch()
                         save_settings(self.pending_values)
                         windows_service.install_start()
                         self.state.set("Служба запускается…")
@@ -329,6 +419,7 @@ class Window:
                     else:
                         self.pipe.send(("reply", answer))
                 elif kind == "error":
+                    authorized_marker(self.pending_values).unlink(missing_ok=True)
                     self.state.set(value)
         except (EOFError, BrokenPipeError):
             eof = True

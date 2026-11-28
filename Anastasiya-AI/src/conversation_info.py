@@ -12,6 +12,8 @@ def direct_answer(text, *, admin=False, safe=False):
     question = re.sub(r"[^\w\s-]", "", text.lower()).strip()
     if re.fullmatch(r"(?:(?:а |скажи |скажите )?(?:ты |вы ))(?:бот|ии|нейросеть|робот|агент|человек|живой человек|реальный человек)(?: или (?:бот|человек|ии|нейросеть))?", question):
         return "Я ИИ-помощник Soft Skills."
+    if "какие команды" in question or ("что ты умеешь" in question and "команд" in question):
+        return CLIENT + " Можно написать вопрос обычным сообщением." + (" Команды управления: /статус, /панель, /версия." if admin else "")
     if question in {"что ты умеешь", "что вы умеете", "что умеешь", "что ты можешь",
                     "чем можешь помочь", "на что ты способна", "какие у тебя возможности"}:
         return CLIENT + ((" " + ADMIN + (" Сейчас включён тестовый режим." if safe else "")) if admin else "")
